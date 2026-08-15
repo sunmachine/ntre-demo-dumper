@@ -74,8 +74,16 @@ than TF2's, so any parser with TF2-typed events silently misreads NT;RE
 demos. The `extract/net.rs` extractor builds the kill feed, roster, chat, and
 the generic `game_events` table from these messages.
 
-## Planned growth
+## Entity layer
 
-- All-player positions/aim: sendtable-driven entity decoding
-  (svc_PacketEntities), likely via demostf/parser's entity machinery, which
-  is definition-driven and therefore safe where its typed game events are not.
+`extract/entities.rs` decodes svc_PacketEntities through tf-demo-parser's
+sendtable machinery — a whole-file pass separate from the frame loop, since
+the library owns its own demo walk. Its analyser subscribes to
+`MessageType::PacketEntities` only, so the library length-skips game events
+and never runs its unsafe typed-event reader. Player classes are found
+dynamically (server class names ending in "Player"), props are matched by
+name (`m_vecOrigin`, `m_angEyeAngles[…]`, `m_hActiveWeapon`, …) after
+resolving identifiers from the demo's data tables, and the active weapon
+handle resolves to a class name via per-entity class tracking. A mid-file
+decode error degrades to a warning and keeps all samples decoded so far —
+frame-level extraction is never affected.

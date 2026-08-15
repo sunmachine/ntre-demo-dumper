@@ -12,6 +12,7 @@
 
 pub mod announcements;
 pub mod console;
+pub mod entities;
 pub mod inputs;
 pub mod net;
 pub mod pov;

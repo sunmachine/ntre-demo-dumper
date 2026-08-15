@@ -10,7 +10,7 @@ use std::time::Instant;
 
 use crate::demo::frames::FrameIter;
 use crate::demo::header::{DemoHeader, HEADER_SIZE};
-use crate::extract::{announcements, console, inputs, net, pov, DemoContext, FrameExtractor};
+use crate::extract::{announcements, console, entities, inputs, net, pov, DemoContext, FrameExtractor};
 use crate::output::sqlite::Db;
 
 pub struct Options {
@@ -56,11 +56,31 @@ pub fn parse_one(path: &Path, db: &Db, opts: &Options) -> Result<()> {
         }
     }
 
+    // Whole-file entity pass (all-player positions/aim/weapons); a failure
+    // here degrades to a warning and never blocks the frame-level data.
+    let entity_output = match entities::run(&data) {
+        Ok(output) => Some(output),
+        Err(e) => {
+            eprintln!("  warning: entity pass failed: {e}");
+            None
+        }
+    };
+
     db.begin()?;
     let demo_id = db.insert_demo(&path.display().to_string(), &header)?;
     let mut summary = Vec::new();
     for extractor in &mut extractors {
         summary.extend(extractor.persist(db, demo_id, &ctx)?);
+    }
+    if let Some(output) = &entity_output {
+        db.insert_player_samples(demo_id, &output.samples)?;
+        summary.push(("player samples".into(), output.samples.len()));
+        if output.player_classes.is_empty() {
+            eprintln!("  warning: no player classes found in sendtables (entity samples empty?)");
+        }
+        if let Some(warning) = &output.warning {
+            eprintln!("  warning: {warning}");
+        }
     }
     db.commit()?;
 

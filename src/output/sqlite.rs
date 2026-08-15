@@ -147,6 +147,25 @@ CREATE TABLE IF NOT EXISTS game_events (
     fields TEXT NOT NULL
 );
 
+-- All-player entity samples (on-change): position, eye angles, weapon,
+-- health, team (2=Jinrai, 3=NSF), life state. POV demos only see entities
+-- in the recorder's PVS; in_pvs=0 marks a player leaving it.
+CREATE TABLE IF NOT EXISTS player_samples (
+    id INTEGER PRIMARY KEY,
+    demo_id INTEGER NOT NULL REFERENCES demos(id),
+    tick INTEGER NOT NULL,
+    entity_id INTEGER NOT NULL,
+    x REAL NOT NULL, y REAL NOT NULL, z REAL NOT NULL,
+    eye_pitch REAL NOT NULL, eye_yaw REAL NOT NULL,
+    weapon TEXT NOT NULL,
+    health INTEGER NOT NULL,
+    team INTEGER NOT NULL,
+    alive INTEGER NOT NULL,
+    in_pvs INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_player_samples_demo_tick ON player_samples(demo_id, tick);
+CREATE INDEX IF NOT EXISTS idx_player_samples_demo_entity ON player_samples(demo_id, entity_id, tick);
 CREATE INDEX IF NOT EXISTS idx_game_events_demo_name ON game_events(demo_id, name);
 CREATE INDEX IF NOT EXISTS idx_kills_demo_tick ON kills(demo_id, tick);
 CREATE INDEX IF NOT EXISTS idx_announcements_demo_tick ON announcements(demo_id, tick);
@@ -328,6 +347,25 @@ impl Db {
         )?;
         for (tick, name, fields) in events {
             ins.execute(rusqlite::params![demo_id, tick, name, fields])?;
+        }
+        Ok(())
+    }
+
+    pub fn insert_player_samples(
+        &self,
+        demo_id: i64,
+        samples: &[crate::extract::entities::PlayerSample],
+    ) -> Result<()> {
+        let mut ins = self.conn.prepare(
+            "INSERT INTO player_samples (demo_id, tick, entity_id, x, y, z, eye_pitch, eye_yaw,
+                                         weapon, health, team, alive, in_pvs)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+        )?;
+        for s in samples {
+            ins.execute(rusqlite::params![
+                demo_id, s.tick, s.entity_id, s.x, s.y, s.z, s.eye_pitch, s.eye_yaw,
+                s.weapon, s.health, s.team, s.alive, s.in_pvs,
+            ])?;
         }
         Ok(())
     }

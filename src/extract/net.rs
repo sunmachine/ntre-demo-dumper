@@ -89,6 +89,30 @@ fn fields_to_json(fields: &[(String, EventValue)]) -> String {
     out
 }
 
+/// Strip Source chat control codes: \x01-\x06 mode markers, \x07 + RRGGBB,
+/// \x08 + RRGGBBAA.
+fn strip_chat_codes(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars();
+    while let Some(c) = chars.next() {
+        match c as u32 {
+            1..=6 => {}
+            7 => {
+                for _ in 0..6 {
+                    chars.next();
+                }
+            }
+            8 => {
+                for _ in 0..8 {
+                    chars.next();
+                }
+            }
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
 fn field<'a>(fields: &'a [(String, EventValue)], name: &str) -> Option<&'a EventValue> {
     fields.iter().find(|(n, _)| n == name).map(|(_, v)| v)
 }
@@ -175,7 +199,9 @@ impl NetPass {
                 })
             }
         };
-        if let Ok(line) = parse() {
+        if let Ok(mut line) = parse() {
+            line.text = strip_chat_codes(&line.text).trim().to_string();
+            line.from = strip_chat_codes(&line.from).trim().to_string();
             if !line.text.is_empty() {
                 self.chat.push(line);
             }

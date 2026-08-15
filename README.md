@@ -28,6 +28,11 @@ The crate/binary is named `ntre-demo-dumper`.
 - **All game events** — every event in the demo (ghost captures, rank changes,
   round transitions…), decoded generically against the demo's own event
   definitions and stored with fields as JSON (query with SQLite's `json_extract`).
+- **All-player entity samples** — position, eye angles, active weapon, health,
+  team, and life state for every player, on change (~66/s while moving),
+  decoded from delta-compressed entity updates via the demo's own sendtables.
+  Note: a POV demo only contains entities within the recorder's PVS; SourceTV
+  demos contain everyone, always.
 
 ## How it works
 
@@ -80,7 +85,8 @@ ntre-demo-dumper --match 'REGEX' my.dem      # capture extra announcement patter
 ntre-demo-dumper --all-strings my.dem        # exploratory: keep every recovered string
 ```
 
-Tables: `demos`, `announcements`, `rounds`, `pov_samples`, `console_cmds`.
+Tables: `demos`, `announcements`, `rounds`, `pov_samples`, `recorder_inputs`,
+`console_cmds`, `players`, `kills`, `chat`, `game_events`, `player_samples`.
 
 ## License
 
