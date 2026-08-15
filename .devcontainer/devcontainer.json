@@ -1,0 +1,13 @@
+{
+  "name": "ntre-demo-parser",
+  "image": "mcr.microsoft.com/devcontainers/rust:1",
+  "postCreateCommand": "cargo fetch",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "rust-lang.rust-analyzer",
+        "tamasfe.even-better-toml"
+      ]
+    }
+  }
+}

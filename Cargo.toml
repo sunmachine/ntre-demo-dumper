@@ -1,0 +1,15 @@
+[package]
+name = "ntre-demo-parser"
+version = "0.1.0"
+edition = "2021"
+description = "Offline gameplay-data extractor for NEOTOKYO;REBUILD (NT;RE) demo files"
+license = "MIT"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+regex = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+[profile.release]
+lto = true
