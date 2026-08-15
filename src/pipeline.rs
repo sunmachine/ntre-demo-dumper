@@ -10,7 +10,7 @@ use std::time::Instant;
 
 use crate::demo::frames::FrameIter;
 use crate::demo::header::{DemoHeader, HEADER_SIZE};
-use crate::extract::{announcements, console, inputs, pov, DemoContext, FrameExtractor};
+use crate::extract::{announcements, console, inputs, net, pov, DemoContext, FrameExtractor};
 use crate::output::sqlite::Db;
 
 pub struct Options {
@@ -46,6 +46,7 @@ pub fn parse_one(path: &Path, db: &Db, opts: &Options) -> Result<()> {
         Box::new(pov::PovSampler::new(opts.pov_sample)),
         Box::new(console::ConsoleCmds::default()),
         Box::new(inputs::RecorderInputs::default()),
+        Box::new(net::NetPass::default()),
     ];
 
     for frame in FrameIter::new(&data, HEADER_SIZE) {

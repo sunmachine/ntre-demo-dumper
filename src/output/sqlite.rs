@@ -97,6 +97,58 @@ CREATE TABLE IF NOT EXISTS console_cmds (
     cmd TEXT NOT NULL
 );
 
+-- Player roster: from the string-table dump at recording start plus
+-- player_connect/player_info game events for late joiners.
+CREATE TABLE IF NOT EXISTS players (
+    id INTEGER PRIMARY KEY,
+    demo_id INTEGER NOT NULL REFERENCES demos(id),
+    entity_id INTEGER NOT NULL,
+    userid INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    steamid TEXT NOT NULL,
+    is_bot INTEGER NOT NULL,
+    first_seen_tick INTEGER NOT NULL
+);
+
+-- Kill feed from the player_death game event (NT;RE definition).
+CREATE TABLE IF NOT EXISTS kills (
+    id INTEGER PRIMARY KEY,
+    demo_id INTEGER NOT NULL REFERENCES demos(id),
+    tick INTEGER NOT NULL,
+    victim_userid INTEGER NOT NULL,
+    victim_name TEXT,
+    attacker_userid INTEGER NOT NULL,
+    attacker_name TEXT,
+    assists INTEGER NOT NULL,
+    weapon TEXT NOT NULL,
+    headshot INTEGER NOT NULL,
+    suicide INTEGER NOT NULL,
+    explosive INTEGER NOT NULL,
+    ghoster INTEGER NOT NULL
+);
+
+-- Chat lines (SayText2 user messages).
+CREATE TABLE IF NOT EXISTS chat (
+    id INTEGER PRIMARY KEY,
+    demo_id INTEGER NOT NULL REFERENCES demos(id),
+    tick INTEGER NOT NULL,
+    client_entity INTEGER NOT NULL,
+    from_name TEXT NOT NULL,
+    text TEXT NOT NULL,
+    team_chat INTEGER NOT NULL
+);
+
+-- Every game event, fields as JSON (queryable via SQLite's json functions).
+CREATE TABLE IF NOT EXISTS game_events (
+    id INTEGER PRIMARY KEY,
+    demo_id INTEGER NOT NULL REFERENCES demos(id),
+    tick INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    fields TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_game_events_demo_name ON game_events(demo_id, name);
+CREATE INDEX IF NOT EXISTS idx_kills_demo_tick ON kills(demo_id, tick);
 CREATE INDEX IF NOT EXISTS idx_announcements_demo_tick ON announcements(demo_id, tick);
 CREATE INDEX IF NOT EXISTS idx_pov_demo_tick ON pov_samples(demo_id, tick);
 CREATE INDEX IF NOT EXISTS idx_inputs_demo_tick ON recorder_inputs(demo_id, tick);
@@ -210,6 +262,72 @@ impl Db {
                 c.mousedx,
                 c.mousedy,
             ])?;
+        }
+        Ok(())
+    }
+
+    pub fn insert_players(&self, demo_id: i64, players: &[&crate::extract::net::Player]) -> Result<()> {
+        let mut ins = self.conn.prepare(
+            "INSERT INTO players (demo_id, entity_id, userid, name, steamid, is_bot, first_seen_tick)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        )?;
+        for p in players {
+            ins.execute(rusqlite::params![
+                demo_id, p.entity_id, p.user_id, p.name, p.steam_id, p.is_bot, p.first_seen_tick,
+            ])?;
+        }
+        Ok(())
+    }
+
+    pub fn insert_kills(
+        &self,
+        demo_id: i64,
+        kills: &[crate::extract::net::Kill],
+        name_of: &dyn Fn(u32) -> Option<String>,
+    ) -> Result<()> {
+        let mut ins = self.conn.prepare(
+            "INSERT INTO kills (demo_id, tick, victim_userid, victim_name, attacker_userid,
+                                attacker_name, assists, weapon, headshot, suicide, explosive, ghoster)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+        )?;
+        for k in kills {
+            ins.execute(rusqlite::params![
+                demo_id,
+                k.tick,
+                k.victim_userid,
+                name_of(k.victim_userid),
+                k.attacker_userid,
+                name_of(k.attacker_userid),
+                k.assists,
+                k.weapon,
+                k.headshot,
+                k.suicide,
+                k.explosive,
+                k.ghoster,
+            ])?;
+        }
+        Ok(())
+    }
+
+    pub fn insert_chat(&self, demo_id: i64, chat: &[crate::extract::net::ChatLine]) -> Result<()> {
+        let mut ins = self.conn.prepare(
+            "INSERT INTO chat (demo_id, tick, client_entity, from_name, text, team_chat)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        )?;
+        for c in chat {
+            ins.execute(rusqlite::params![
+                demo_id, c.tick, c.client_entity, c.from, c.text, c.team_chat,
+            ])?;
+        }
+        Ok(())
+    }
+
+    pub fn insert_game_events(&self, demo_id: i64, events: &[(i32, String, String)]) -> Result<()> {
+        let mut ins = self.conn.prepare(
+            "INSERT INTO game_events (demo_id, tick, name, fields) VALUES (?1, ?2, ?3, ?4)",
+        )?;
+        for (tick, name, fields) in events {
+            ins.execute(rusqlite::params![demo_id, tick, name, fields])?;
         }
         Ok(())
     }

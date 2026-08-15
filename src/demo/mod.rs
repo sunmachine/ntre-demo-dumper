@@ -7,4 +7,6 @@
 pub mod bits;
 pub mod frames;
 pub mod header;
+pub mod net;
+pub mod stringtables;
 pub mod usercmd;

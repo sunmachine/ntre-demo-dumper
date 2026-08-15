@@ -19,6 +19,15 @@ The crate/binary is named `ntre-demo-dumper`.
   switches, decoded from `dem_usercmd` frames. Convenience boolean columns are
   generated from the raw buttons field.
 - **Console commands** issued by the recorder.
+- **Kill feed** — NT;RE's `player_death` game event: victim, attacker, assists,
+  weapon, headshot/suicide/explosive/ghoster flags, with names resolved via the
+  roster.
+- **Player roster** — name, userid, SteamID, bot flag, from the string-table
+  dump at recording start plus connect events for late joiners.
+- **Chat** — SayText2 user messages.
+- **All game events** — every event in the demo (ghost captures, rank changes,
+  round transitions…), decoded generically against the demo's own event
+  definitions and stored with fields as JSON (query with SQLite's `json_extract`).
 
 ## How it works
 

@@ -13,6 +13,7 @@
 pub mod announcements;
 pub mod console;
 pub mod inputs;
+pub mod net;
 pub mod pov;
 pub mod rounds;
 pub mod skim;

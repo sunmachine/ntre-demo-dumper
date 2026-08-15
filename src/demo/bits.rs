@@ -53,6 +53,125 @@ impl<'a> BitReader<'a> {
     pub fn read_f32(&mut self) -> Result<f32> {
         Ok(f32::from_bits(self.read_bits(32)?))
     }
+
+    pub fn skip_bits(&mut self, n: usize) -> Result<()> {
+        if self.bits_left() < n {
+            bail!("bit stream exhausted (skip {n} bits, {} left)", self.bits_left());
+        }
+        self.pos += n;
+        Ok(())
+    }
+
+    /// Null-terminated string of (possibly bit-shifted) bytes.
+    pub fn read_string(&mut self) -> Result<String> {
+        let mut bytes = Vec::new();
+        loop {
+            let b = self.read_u8()?;
+            if b == 0 {
+                break;
+            }
+            if bytes.len() >= 4096 {
+                bail!("unterminated string in bit stream");
+            }
+            bytes.push(b);
+        }
+        Ok(String::from_utf8_lossy(&bytes).into_owned())
+    }
+
+    /// Protobuf-style varint (7 bits per byte, up to 35 bits).
+    pub fn read_var_int(&mut self) -> Result<u32> {
+        let mut result: u32 = 0;
+        for shift in (0..35u32).step_by(7) {
+            let byte = self.read_u8()?;
+            result |= ((byte & 0x7f) as u32) << shift;
+            if byte & 0x80 == 0 {
+                break;
+            }
+        }
+        Ok(result)
+    }
+
+    /// The engine's ReadBitCoord (14-bit integer part, 5-bit fraction).
+    pub fn read_bit_coord(&mut self) -> Result<f32> {
+        let has_int = self.read_bit()?;
+        let has_frac = self.read_bit()?;
+        if !has_int && !has_frac {
+            return Ok(0.0);
+        }
+        let negative = self.read_bit()?;
+        let int_part = if has_int { self.read_bits(14)? + 1 } else { 0 };
+        let frac_part = if has_frac { self.read_bits(5)? } else { 0 };
+        let value = int_part as f32 + frac_part as f32 / 32.0;
+        Ok(if negative { -value } else { value })
+    }
+
+    /// Copy the next `n` bits out into a byte-aligned buffer.
+    pub fn read_chunk(&mut self, n: usize) -> Result<BitChunk> {
+        let mut bytes = Vec::with_capacity(n.div_ceil(8));
+        let mut left = n;
+        while left >= 8 {
+            bytes.push(self.read_bits(8)? as u8);
+            left -= 8;
+        }
+        if left > 0 {
+            bytes.push(self.read_bits(left as u32)? as u8);
+        }
+        Ok(BitChunk { bytes, bit_len: n })
+    }
+}
+
+/// An extracted, bit-aligned copy of part of a bit stream. `bit_len` records
+/// the exact extracted size; the final byte may carry padding bits past it.
+#[derive(Debug, Clone)]
+pub struct BitChunk {
+    pub bytes: Vec<u8>,
+    #[allow(dead_code)]
+    pub bit_len: usize,
+}
+
+impl BitChunk {
+    pub fn reader(&self) -> BitReader<'_> {
+        BitReader::new(&self.bytes)
+    }
+}
+
+/// Test-only LSB-first bit writer, the mirror of [`BitReader`]. Used to
+/// construct synthetic wire-format fixtures.
+#[cfg(test)]
+pub mod testutil {
+    #[derive(Default)]
+    pub struct BitWriter {
+        pub bytes: Vec<u8>,
+        bit_pos: usize,
+    }
+
+    impl BitWriter {
+        pub fn write_bits(&mut self, value: u32, n: u32) {
+            for i in 0..n {
+                if self.bit_pos % 8 == 0 {
+                    self.bytes.push(0);
+                }
+                let bit = (value >> i) & 1;
+                *self.bytes.last_mut().unwrap() |= (bit as u8) << (self.bit_pos % 8);
+                self.bit_pos += 1;
+            }
+        }
+
+        pub fn write_bit(&mut self, b: bool) {
+            self.write_bits(b as u32, 1);
+        }
+
+        pub fn write_string(&mut self, s: &str) {
+            for &b in s.as_bytes() {
+                self.write_bits(b as u32, 8);
+            }
+            self.write_bits(0, 8);
+        }
+
+        pub fn write_f32(&mut self, f: f32) {
+            self.write_bits(f.to_bits(), 32);
+        }
+    }
 }
 
 #[cfg(test)]

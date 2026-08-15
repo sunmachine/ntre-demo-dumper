@@ -10,6 +10,7 @@ anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 regex = "1"
 rusqlite = { version = "0.32", features = ["bundled"] }
+tf-demo-parser = "0.6.4"
 
 [profile.release]
 lto = true

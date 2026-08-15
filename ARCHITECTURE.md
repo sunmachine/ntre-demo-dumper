@@ -7,10 +7,12 @@ Data flows one direction through three layers, orchestrated by `pipeline.rs`:
    │
    ▼
 demo/       reads the on-disk format; knows nothing about gameplay
-   │           header.rs    fixed 1072-byte HL2DEMO header (map, server, ticks…)
-   │           frames.rs    frame iterator: command, tick, payload, recorder POV
-   │           bits.rs      LSB-first bit reader (Source bf_read semantics)
-   │           usercmd.rs   dem_usercmd decode (stock SDK2013 wire format)
+   │           header.rs        fixed 1072-byte HL2DEMO header (map, server, ticks…)
+   │           frames.rs        frame iterator: command, tick, payload, recorder POV
+   │           bits.rs          LSB-first bit reader (Source bf_read semantics)
+   │           usercmd.rs       dem_usercmd decode (stock SDK2013 wire format)
+   │           net.rs           net-message framing + generic game-event parsing
+   │           stringtables.rs  dem_stringtables dump (player roster / userinfo)
    ▼
 extract/    turns frames into gameplay facts; does no I/O during extraction
    │           mod.rs            FrameExtractor trait + DemoContext
@@ -60,11 +62,20 @@ decoding the net protocol, `skim.rs` scans each payload at all 8 bit
 alignments for printable ASCII. Demos stopped mid-write can end a few bytes
 short of a full frame — treated as clean EOF.
 
+## Net-message layer
+
+`demo/net.rs` frames the bit-packed message stream inside signon/packet
+frames: every message type on this engine branch is either surfaced or
+skipped by its known wire size (formats ported from
+[demostf/parser](https://github.com/demostf/parser), MIT). Game events are
+parsed **generically against the demo's own event definitions** — never a
+hardcoded schema. This matters: NT;RE's `player_death` has different fields
+than TF2's, so any parser with TF2-typed events silently misreads NT;RE
+demos. The `extract/net.rs` extractor builds the kill feed, roster, chat, and
+the generic `game_events` table from these messages.
+
 ## Planned growth
 
-- Phase 2 (kill feed, chat, roster): a `demo/net/` module decoding the
-  bit-packed net-message stream (game events, user messages, string tables),
-  feeding new extractors.
-- Phase 3 (all-player positions/aim): sendtable-driven entity decoding,
-  likely adapted from [demostf/parser](https://github.com/demostf/parser)
-  since the engine branch matches.
+- All-player positions/aim: sendtable-driven entity decoding
+  (svc_PacketEntities), likely via demostf/parser's entity machinery, which
+  is definition-driven and therefore safe where its typed game events are not.

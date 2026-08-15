@@ -11,7 +11,10 @@ use anyhow::Result;
 
 use super::bits::BitReader;
 
-/// NEO-relevant button bits (src/game/shared/in_buttons.h in the NT;RE repo).
+/// NEO-relevant button bits (src/game/shared/in_buttons.h in the NT;RE
+/// repo). Reference for consumers of the raw `buttons` field; the SQLite
+/// schema's generated columns encode the same bit numbers.
+#[allow(dead_code)]
 pub mod buttons {
     pub const ATTACK: u32 = 1 << 0;
     pub const JUMP: u32 = 1 << 1;
