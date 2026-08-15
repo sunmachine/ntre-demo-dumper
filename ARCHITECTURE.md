@@ -7,8 +7,10 @@ Data flows one direction through three layers, orchestrated by `pipeline.rs`:
    │
    ▼
 demo/       reads the on-disk format; knows nothing about gameplay
-   │           header.rs   fixed 1072-byte HL2DEMO header (map, server, ticks…)
-   │           frames.rs   frame iterator: command, tick, payload, recorder POV
+   │           header.rs    fixed 1072-byte HL2DEMO header (map, server, ticks…)
+   │           frames.rs    frame iterator: command, tick, payload, recorder POV
+   │           bits.rs      LSB-first bit reader (Source bf_read semantics)
+   │           usercmd.rs   dem_usercmd decode (stock SDK2013 wire format)
    ▼
 extract/    turns frames into gameplay facts; does no I/O during extraction
    │           mod.rs            FrameExtractor trait + DemoContext

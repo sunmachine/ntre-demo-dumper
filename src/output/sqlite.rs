@@ -63,6 +63,32 @@ CREATE TABLE IF NOT EXISTS pov_samples (
     pitch REAL NOT NULL, yaw REAL NOT NULL, roll REAL NOT NULL
 );
 
+-- Recorder raw input per tick, from dem_usercmd frames. `buttons` is the
+-- raw 32-bit field; common bits are exposed as generated columns
+-- (attack = fired, aim = aim-down-sights, lean_*, thermoptic, vision).
+CREATE TABLE IF NOT EXISTS recorder_inputs (
+    id INTEGER PRIMARY KEY,
+    demo_id INTEGER NOT NULL REFERENCES demos(id),
+    tick INTEGER NOT NULL,
+    buttons INTEGER NOT NULL,
+    impulse INTEGER NOT NULL,
+    weaponselect INTEGER,
+    pitch REAL NOT NULL, yaw REAL NOT NULL, roll REAL NOT NULL,
+    forwardmove REAL NOT NULL, sidemove REAL NOT NULL, upmove REAL NOT NULL,
+    mousedx INTEGER NOT NULL, mousedy INTEGER NOT NULL,
+    attack     INTEGER GENERATED ALWAYS AS ((buttons >> 0) & 1) VIRTUAL,
+    jump       INTEGER GENERATED ALWAYS AS ((buttons >> 1) & 1) VIRTUAL,
+    duck       INTEGER GENERATED ALWAYS AS ((buttons >> 2) & 1) VIRTUAL,
+    attack2    INTEGER GENERATED ALWAYS AS ((buttons >> 11) & 1) VIRTUAL,
+    reload     INTEGER GENERATED ALWAYS AS ((buttons >> 13) & 1) VIRTUAL,
+    sprint     INTEGER GENERATED ALWAYS AS ((buttons >> 17) & 1) VIRTUAL,
+    aim        INTEGER GENERATED ALWAYS AS ((buttons >> 27) & 1) VIRTUAL,
+    lean_left  INTEGER GENERATED ALWAYS AS ((buttons >> 28) & 1) VIRTUAL,
+    lean_right INTEGER GENERATED ALWAYS AS ((buttons >> 29) & 1) VIRTUAL,
+    thermoptic INTEGER GENERATED ALWAYS AS ((buttons >> 30) & 1) VIRTUAL,
+    vision     INTEGER GENERATED ALWAYS AS ((buttons >> 31) & 1) VIRTUAL
+);
+
 -- Console commands issued by the recorder during playback.
 CREATE TABLE IF NOT EXISTS console_cmds (
     id INTEGER PRIMARY KEY,
@@ -73,6 +99,7 @@ CREATE TABLE IF NOT EXISTS console_cmds (
 
 CREATE INDEX IF NOT EXISTS idx_announcements_demo_tick ON announcements(demo_id, tick);
 CREATE INDEX IF NOT EXISTS idx_pov_demo_tick ON pov_samples(demo_id, tick);
+CREATE INDEX IF NOT EXISTS idx_inputs_demo_tick ON recorder_inputs(demo_id, tick);
 "#;
 
 impl Db {
@@ -151,6 +178,37 @@ impl Db {
             ins.execute(rusqlite::params![
                 demo_id, tick, v.origin[0], v.origin[1], v.origin[2],
                 v.angles[0], v.angles[1], v.angles[2],
+            ])?;
+        }
+        Ok(())
+    }
+
+    pub fn insert_recorder_inputs(
+        &self,
+        demo_id: i64,
+        cmds: &[(i32, crate::demo::usercmd::UserCmd)],
+    ) -> Result<()> {
+        let mut ins = self.conn.prepare(
+            "INSERT INTO recorder_inputs (demo_id, tick, buttons, impulse, weaponselect,
+                                          pitch, yaw, roll, forwardmove, sidemove, upmove,
+                                          mousedx, mousedy)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+        )?;
+        for (tick, c) in cmds {
+            ins.execute(rusqlite::params![
+                demo_id,
+                tick,
+                c.buttons as i64,
+                c.impulse,
+                c.weaponselect,
+                c.viewangles[0],
+                c.viewangles[1],
+                c.viewangles[2],
+                c.forwardmove,
+                c.sidemove,
+                c.upmove,
+                c.mousedx,
+                c.mousedy,
             ])?;
         }
         Ok(())

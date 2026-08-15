@@ -14,6 +14,10 @@ The crate/binary is named `ntre-demo-dumper`.
 - **Rounds** — derived start/end tick, winner, and win reason per round.
 - **Recorder POV** — position and view angles every packet frame (~66/s), ready
   for heatmaps of the recording player.
+- **Recorder inputs** — per-tick buttons (fire, jump, duck, reload, sprint, and
+  NEO's aim/lean/thermoptic/vision), movement axes, mouse deltas, and weapon
+  switches, decoded from `dem_usercmd` frames. Convenience boolean columns are
+  generated from the raw buttons field.
 - **Console commands** issued by the recorder.
 
 ## How it works
