@@ -1,5 +1,5 @@
 {
-  "name": "ntre-demo-parser",
+  "name": "ntre-demo-dumper",
   "image": "mcr.microsoft.com/devcontainers/rust:1",
   "postCreateCommand": "cargo fetch",
   "customizations": {

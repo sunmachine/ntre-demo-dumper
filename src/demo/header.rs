@@ -15,6 +15,7 @@ pub struct DemoHeader {
     pub playback_seconds: f32,
     pub playback_ticks: i32,
     pub playback_frames: i32,
+    #[allow(dead_code)] // part of the on-disk format; not stored yet
     pub signon_length: i32,
 }
 

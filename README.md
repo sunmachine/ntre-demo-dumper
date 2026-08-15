@@ -1,7 +1,8 @@
-# ntre-demo-parser
+# NT;RE Demo Dumper Tool
 
 Offline gameplay-data extractor for [NEOTOKYO;REBUILD](https://github.com/NeotokyoRebuild/neo)
 (NT;RE) demo files. Reads `.dem` recordings and writes gameplay data to SQLite.
+The crate/binary is named `ntre-demo-dumper`.
 
 ## What it extracts (phase 1)
 
@@ -16,6 +17,9 @@ Offline gameplay-data extractor for [NEOTOKYO;REBUILD](https://github.com/Neotok
 - **Console commands** issued by the recorder.
 
 ## How it works
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the layer layout and how to add a
+new extractor.
 
 The demo is walked frame by frame (each frame header carries its command, tick,
 and payload length — fully deterministic and byte-aligned). Packet payloads are
@@ -56,11 +60,11 @@ dependency is a C compiler (SQLite is bundled).
 ## Usage
 
 ```sh
-ntre-demo-parser my_demo.dem                 # writes ntre_demos.sqlite
-ntre-demo-parser -o out.sqlite *.dem         # multiple demos, one database
-ntre-demo-parser --pov-sample 10 my.dem      # thin POV samples to every 10th frame
-ntre-demo-parser --match 'REGEX' my.dem      # capture extra announcement patterns
-ntre-demo-parser --all-strings my.dem        # exploratory: keep every recovered string
+ntre-demo-dumper my_demo.dem                 # writes ntre_demos.sqlite
+ntre-demo-dumper -o out.sqlite *.dem         # multiple demos, one database
+ntre-demo-dumper --pov-sample 10 my.dem      # thin POV samples to every 10th frame
+ntre-demo-dumper --match 'REGEX' my.dem      # capture extra announcement patterns
+ntre-demo-dumper --all-strings my.dem        # exploratory: keep every recovered string
 ```
 
 Tables: `demos`, `announcements`, `rounds`, `pov_samples`, `console_cmds`.

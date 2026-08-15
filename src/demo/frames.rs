@@ -1,4 +1,5 @@
 use anyhow::{bail, Result};
+use std::ops::Range;
 
 /// Demo protocol 3 (Source SDK 2013) frame commands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -21,12 +22,20 @@ pub struct ViewInfo {
     pub angles: [f32; 3], // pitch, yaw, roll
 }
 
-#[derive(Debug)]
-pub struct Frame<'a> {
+/// One demo frame. `payload` is a byte range into the demo file, so frames
+/// are lifetime-free and cheap to store; slice it with [`Frame::payload_in`].
+#[derive(Debug, Clone)]
+pub struct Frame {
     pub kind: FrameKind,
     pub tick: i32,
     pub view: Option<ViewInfo>,
-    pub payload: &'a [u8],
+    pub payload: Range<usize>,
+}
+
+impl Frame {
+    pub fn payload_in<'a>(&self, data: &'a [u8]) -> &'a [u8] {
+        &data[self.payload.clone()]
+    }
 }
 
 const CMDINFO_SIZE: usize = 76; // flags + 6 vectors (view origin/angles/local angles, x2)
@@ -49,20 +58,21 @@ impl<'a> FrameIter<'a> {
         Self { data, pos: start, done: false }
     }
 
-    fn take(&mut self, n: usize) -> Result<&'a [u8]> {
+    fn take(&mut self, n: usize) -> Result<Range<usize>> {
         if self.pos + n > self.data.len() {
             bail!("truncated demo: wanted {} bytes at offset {}", n, self.pos);
         }
-        let s = &self.data[self.pos..self.pos + n];
+        let r = self.pos..self.pos + n;
         self.pos += n;
-        Ok(s)
+        Ok(r)
     }
 
     fn take_i32(&mut self) -> Result<i32> {
-        Ok(i32::from_le_bytes(self.take(4)?.try_into().unwrap()))
+        let r = self.take(4)?;
+        Ok(i32::from_le_bytes(self.data[r].try_into().unwrap()))
     }
 
-    fn next_frame(&mut self) -> Result<Option<Frame<'a>>> {
+    fn next_frame(&mut self) -> Result<Option<Frame>> {
         if self.done {
             return Ok(None);
         }
@@ -72,11 +82,11 @@ impl<'a> FrameIter<'a> {
             self.done = true;
             return Ok(None);
         }
-        let cmd = self.take(1)?[0];
+        let cmd = self.data[self.take(1)?.start];
         let tick = self.take_i32()?;
         let frame = match cmd {
             1 | 2 => {
-                let info = self.take(CMDINFO_SIZE)?;
+                let info = &self.data[self.take(CMDINFO_SIZE)?];
                 let view = ViewInfo {
                     origin: [f32_at(info, 4), f32_at(info, 8), f32_at(info, 12)],
                     angles: [f32_at(info, 16), f32_at(info, 20), f32_at(info, 24)],
@@ -91,7 +101,7 @@ impl<'a> FrameIter<'a> {
                     payload,
                 }
             }
-            3 => Frame { kind: FrameKind::SyncTick, tick, view: None, payload: &[] },
+            3 => Frame { kind: FrameKind::SyncTick, tick, view: None, payload: 0..0 },
             4 | 5 | 6 | 8 => {
                 if cmd == 5 {
                     self.take(4)?; // outgoing usercmd sequence number
@@ -108,7 +118,7 @@ impl<'a> FrameIter<'a> {
             }
             7 => {
                 self.done = true;
-                Frame { kind: FrameKind::Stop, tick, view: None, payload: &[] }
+                Frame { kind: FrameKind::Stop, tick, view: None, payload: 0..0 }
             }
             other => bail!("unknown frame command {} at offset {}", other, self.pos - 5),
         };
@@ -117,7 +127,7 @@ impl<'a> FrameIter<'a> {
 }
 
 impl<'a> Iterator for FrameIter<'a> {
-    type Item = Result<Frame<'a>>;
+    type Item = Result<Frame>;
 
     fn next(&mut self) -> Option<Self::Item> {
         match self.next_frame() {

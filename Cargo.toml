@@ -1,5 +1,5 @@
 [package]
-name = "ntre-demo-parser"
+name = "ntre-demo-dumper"
 version = "0.1.0"
 edition = "2021"
 description = "Offline gameplay-data extractor for NEOTOKYO;REBUILD (NT;RE) demo files"
