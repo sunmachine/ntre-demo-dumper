@@ -1,7 +1,7 @@
 # Database schema
 
 One SQLite database holds any number of demos. Every table except `demos`
-carries a `demo_id` column referencing `demos.id` — filter on it to query a
+carries a `demo_id` column referencing `demos.id`. Filter on it to query a
 single demo, or join across it for multi-demo analysis. The authoritative DDL
 lives in `src/output/sqlite.rs` (`SCHEMA`); this file explains the semantics
 the SQL can't. A unit test asserts every table and column is mentioned here,
@@ -12,10 +12,10 @@ so if you add a column, document it.
 - **Ticks and time.** All `tick` columns are server ticks. Convert to seconds
   with `tick / demos.tickrate` (NT;RE runs at ~66.67 ticks/s). Tick 0 is the
   start of the recording, not the start of the match.
-- **Two player identities.** A player has a `userid` (a server session id —
-  used by `kills` and most game events) and an `entity_id` (their slot in the
-  entity list — used by `player_samples` and `chat.client_entity`). The
-  `players` table holds both, so it's the join hub:
+- **Two player identities.** A `userid` is a server session id, used by
+  `kills` and most game events. An `entity_id` is the player's slot in the
+  entity list, used by `player_samples` and `chat.client_entity`. The
+  `players` table holds both and is the join hub:
   `kills.victim_userid = players.userid`,
   `player_samples.entity_id = players.entity_id`.
 - **Coordinates.** Source engine world units (16 units ≈ 1 foot), map-specific
@@ -40,7 +40,7 @@ One row per parsed demo file; every other table hangs off `id`.
 | `client` | name of the recording player |
 | `map`, `game_directory` | e.g. `nt_saitama_ctg`, `neo` |
 | `playback_seconds`, `playback_ticks`, `playback_frames` | recording length |
-| `tickrate` | `playback_ticks / playback_seconds`; use for tick→time conversion |
+| `tickrate` | `playback_ticks / playback_seconds`; use for tick-to-time conversion |
 
 ### `players`
 
@@ -65,7 +65,7 @@ Kill feed from NT;RE's own `player_death` game event definition.
 |---|---|
 | `tick` | when the kill happened |
 | `victim_userid`, `attacker_userid` | join `players.userid`; attacker 0 = world/environment |
-| `victim_name`, `attacker_name` | resolved at parse time for convenience (NULL if unknown) |
+| `victim_name`, `attacker_name` | resolved at parse time; NULL if unknown |
 | `assists` | assist count reported by the mod |
 | `weapon` | weapon string from the event, e.g. `weapon_srm` |
 | `headshot`, `suicide`, `explosive` | kill flags |
@@ -73,7 +73,8 @@ Kill feed from NT;RE's own `player_death` game event definition.
 
 ### `rounds`
 
-Derived from start/win announcements (not a wire-format fact — heuristic).
+Derived heuristically from start/win announcements, not from a wire-format
+fact.
 
 | column | meaning |
 |---|---|
@@ -84,12 +85,12 @@ Derived from start/win announcements (not a wire-format fact — heuristic).
 
 ### `player_samples`
 
-All-player state over time, decoded from delta-compressed entity updates —
-the heatmap table. Rows are written **on change** (~66/s while a player is
-moving), so carry values forward between rows when resampling.
+All-player state over time, decoded from delta-compressed entity updates;
+this is the heatmap table. Rows are written **on change** (~66/s while a
+player is moving), so carry values forward between rows when resampling.
 
 **PVS caveat:** a POV demo only contains entities the recorder's client was
-sent — players well out of sight produce no rows. SourceTV demos contain
+sent, so players well out of sight produce no rows. SourceTV demos contain
 everyone at all times.
 
 | column | meaning |
@@ -102,12 +103,12 @@ everyone at all times.
 | `health` | current HP; NT;RE class maxima are 100 Recon/VIP, 120 Assault, 225 Support (`neo_player_shared.h`). Negative while dead = overkill damage; spectator entities sit at 1 |
 | `team` | 0 unassigned, 1 spectator, 2 Jinrai, 3 NSF |
 | `alive` | 1 while alive (engine life state 0) |
-| `in_pvs` | 0 marks the player leaving the recorder's PVS — last known state, position stale after it |
+| `in_pvs` | 0 marks the player leaving the recorder's PVS; the row holds their last known state |
 
 ### `pov_samples`
 
-The recorder's own view, one row per packet frame (~66/s, unconditionally —
-denser and simpler than `player_samples` for the recording player). Thin with
+The recorder's own view, one row per packet frame (~66/s, unconditionally).
+Denser and simpler than `player_samples` for the recording player. Thin with
 `--pov-sample N`.
 
 | column | meaning |
@@ -118,8 +119,8 @@ denser and simpler than `player_samples` for the recording player). Thin with
 
 ### `recorder_inputs`
 
-The recorder's raw input per tick from `dem_usercmd` frames — what they
-*pressed*, vs. `pov_samples` which is where they *were*.
+The recorder's raw input per tick, from `dem_usercmd` frames. This table
+records what the recorder pressed; `pov_samples` records where they were.
 
 | column | meaning |
 |---|---|
@@ -136,11 +137,9 @@ columns): `attack` (fired, bit 0), `jump` (1), `duck` (2), `attack2` (alt
 fire, 11), `reload` (13), `sprint` (17), `zoom` (19), and NT;RE's `aim` (27),
 `lean_left` (28), `lean_right` (29), `thermoptic` (30), `vision` (31).
 
-Aiming caveat: **`zoom` is the held aim-down-sights state** — use it for "was
-the player aiming". `aim` is NT;RE's ADS-*toggle* keybind, set only on the
-tick the key is tapped (and 0 throughout for players who bind ADS to `+zoom`,
-the default). The toggled-on aim state itself is player state, not a button,
-so it never appears in usercmds.
+Aiming caveat: use `zoom` for "was the player aiming"; it is the held
+aim-down-sights state. `aim` is NT;RE's ADS-toggle keybind, set only on the
+tick the key is tapped, and stays 0 for players on the default `+zoom` bind.
 
 ### `chat`
 
@@ -157,9 +156,9 @@ SayText2 user messages, control codes stripped.
 ### `game_events`
 
 Every game event in the demo, decoded generically against the demo's own
-event definitions — NT;RE-specific events included (`ghost_capture`,
-`player_rankchange`, `vip_death`, …). This is the escape hatch: anything not
-promoted to its own table is queryable here.
+event definitions, so NT;RE-specific events are included (`ghost_capture`,
+`player_rankchange`, `vip_death`, and others). This is the escape hatch:
+anything not promoted to its own table is queryable here.
 
 | column | meaning |
 |---|---|
@@ -189,16 +188,18 @@ Console commands issued by the recorder during the recording. Columns:
 
 ## Weapon reference
 
-`player_samples.weapon` is the server weapon class with its `CWeapon`/`C`
-prefix stripped (e.g. `CWeaponSRM` → `SRM`); `kills.weapon` is the string
-NT;RE transmits in the `player_death` event — conventionally the entity name
-without the `weapon_` prefix, but the exact spelling is unvalidated against a
-real demo yet. The authoritative lists live in the NT;RE repo:
+`player_samples.weapon` is the server weapon class, lowercased with its
+`CWeapon`/`C` prefix stripped: `CWeaponSRM` becomes `srm`, silenced and
+scoped variants keep their suffix (`mpn_s`, `jittes`, `m41s`).
+`kills.weapon` is the string from the `player_death` event: the weapon
+entity name without its `weapon_` prefix (`srm`, `zr68c`, `jittescoped`).
+Grenade kills report the projectile class instead (`neo_grenade_frag`).
+The authoritative lists live in the NT;RE repo:
 [weapon classes](https://github.com/NeotokyoRebuild/neo/tree/master/src/game/shared/neo/weapons)
 and [weapon scripts](https://github.com/NeotokyoRebuild/neo/tree/master/game/neo/scripts)
 (entity names, HUD names, damage stats).
 
-Weapons as of Aug 2026 (entity name → gameplay role):
+Weapons as of August 2026, by entity name:
 
 | entity | role |
 |---|---|
@@ -218,9 +219,7 @@ Weapons as of Aug 2026 (entity name → gameplay role):
 | `weapon_remotedet`, `weapon_proxmine`, `weapon_smac` | detpack, proximity mine, SMAC (NT;RE) |
 | `weapon_ghost` | the ghost (objective) |
 
-Values are mod data, not wire format — new NT;RE releases can add weapons
-without breaking this parser; unknown names simply appear as-is. Roles for
-the NT;RE-only additions come from script stats, not official descriptions.
+The set is open: names added by future NT;RE releases appear as-is.
 
 ## Example: heatmap query
 

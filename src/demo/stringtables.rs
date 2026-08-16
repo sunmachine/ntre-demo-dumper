@@ -1,5 +1,5 @@
 //! `dem_stringtables` frame decoding: a full dump of every string table,
-//! written at recording start. We use it for the `userinfo` table — the
+//! written at recording start. We use it for the `userinfo` table: the
 //! player roster (name, userid, steamid) as of the moment recording began.
 //! Players who join later surface via `player_connect`/`player_info` game
 //! events instead.
@@ -110,8 +110,8 @@ pub fn parse_player_info(data: &[u8], entity_id: u32) -> Option<PlayerInfo> {
     let name = fixed_str(&data[0..32]);
     let user_id = u32::from_le_bytes(data[32..36].try_into().ok()?);
     let steam_id = fixed_str(&data[36..68]);
-    // Layouts with and without the disputed 4-byte `extra` field both place
-    // the flags after friends_id + friends_name; probe the expected offset.
+    // Two player_info_s layouts exist, with and without a 4-byte `extra`
+    // field; pick the flag offsets by total length.
     let (fake_off, hltv_off) = if data.len() >= 132 { (108, 109) } else { (104, 105) };
     Some(PlayerInfo {
         entity_id,

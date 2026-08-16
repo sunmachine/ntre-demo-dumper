@@ -6,7 +6,7 @@
 //! document it in SCHEMA.md (a test enforces the last part).
 //!
 //! Comments inside a CREATE TABLE statement are preserved by SQLite and shown
-//! by `.schema`, so they double as end-user documentation — comments between
+//! by `.schema`, so they double as end-user documentation; comments between
 //! statements do not.
 
 use anyhow::Result;
@@ -70,7 +70,7 @@ CREATE TABLE IF NOT EXISTS pov_samples (
 
 -- Recorder raw input per tick, from dem_usercmd frames. `buttons` is the
 -- raw 32-bit field; common bits are exposed as generated columns
--- (attack = fired, aim = aim-down-sights, lean_*, thermoptic, vision).
+-- (attack = fired, zoom = held aim-down-sights, aim = ADS-toggle keypress).
 CREATE TABLE IF NOT EXISTS recorder_inputs (
     id INTEGER PRIMARY KEY,
     demo_id INTEGER NOT NULL REFERENCES demos(id),
@@ -399,7 +399,7 @@ mod tests {
     use rusqlite::Connection;
 
     /// SCHEMA.md must mention (in backticks) every table and every column,
-    /// generated columns included — so schema changes can't silently outrun
+    /// generated columns included, so schema changes can't silently outrun
     /// the documentation.
     #[test]
     fn schema_md_documents_every_table_and_column() {

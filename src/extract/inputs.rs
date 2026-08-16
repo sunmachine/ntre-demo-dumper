@@ -1,4 +1,4 @@
-//! Recorder input stream: buttons (fire, aim, lean, thermoptic…), movement,
+//! Recorder input stream: buttons (fire, aim, lean, thermoptic), movement,
 //! and weapon switches, decoded from `dem_usercmd` frames. This is the
 //! "did the recorder shoot this tick" signal.
 

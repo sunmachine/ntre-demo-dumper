@@ -1,7 +1,7 @@
 //! `dem_usercmd` payload decoding: the recorder's raw input for one tick.
 //!
-//! Wire format is Source SDK 2013's `ReadUsercmd` (verified unmodified in
-//! NT;RE's source): every field is prefixed by one presence bit; absent
+//! Wire format is Source SDK 2013's `ReadUsercmd`, which NT;RE does not
+//! modify: every field is prefixed by one presence bit; absent
 //! fields keep their default. Demo usercmds are encoded against a null cmd,
 //! so each frame is self-contained. NT;RE ships extra *buttons* (aim, lean,
 //! thermoptic, vision) but they live inside the standard 32-bit buttons
@@ -24,10 +24,10 @@ pub mod buttons {
     pub const RELOAD: u32 = 1 << 13;
     pub const SPEED: u32 = 1 << 17; // sprint
     pub const WALK: u32 = 1 << 18;
-    pub const ZOOM: u32 = 1 << 19;
+    pub const ZOOM: u32 = 1 << 19; // held aim-down-sights state
     // NEO-specific:
     pub const DROP: u32 = 1 << 26;
-    pub const AIM: u32 = 1 << 27; // aim-down-sights
+    pub const AIM: u32 = 1 << 27; // ADS-toggle keypress; ZOOM is the held state
     pub const LEAN_LEFT: u32 = 1 << 28;
     pub const LEAN_RIGHT: u32 = 1 << 29;
     pub const THERMOPTIC: u32 = 1 << 30;

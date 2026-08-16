@@ -2,7 +2,7 @@
 //! frames and produces the kill feed, chat, player roster, and a generic
 //! game-events table (every event, fields as JSON). Game events are parsed
 //! against the demo's own definitions, so NT;RE-specific events (ghost
-//! captures, rank changes…) decode without any hardcoded schema.
+//! captures, rank changes) decode without any hardcoded schema.
 
 use anyhow::Result;
 use std::collections::HashMap;

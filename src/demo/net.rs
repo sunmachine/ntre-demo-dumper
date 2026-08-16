@@ -4,9 +4,9 @@
 //! Walks the bit-packed message stream inside a signon/packet frame: every
 //! message type's wire format is known well enough to either skip it or hand
 //! it to the caller. Game events are returned as raw bit chunks and parsed
-//! *generically* against the demo's own event definitions ([`parse_game_event`])
-//! — never against a hardcoded schema, since NT;RE's definitions differ from
-//! other games on this engine branch.
+//! generically against the demo's own event definitions
+//! ([`parse_game_event`]), never against a hardcoded schema; NT;RE's
+//! definitions differ from other games on this engine branch.
 //!
 //! Wire formats ported from demostf/parser (MIT), which documents this
 //! engine branch precisely.
@@ -409,7 +409,7 @@ mod tests {
         // svc_SetView
         w.write_bits(18, 6);
         w.write_bits(1, 11);
-        // svc_GameEvent with empty defs — still framed correctly
+        // svc_GameEvent with empty defs is still framed correctly
         w.write_bits(25, 6);
         w.write_bits(9, 11);
         w.write_bits(500, 9);

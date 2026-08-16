@@ -4,31 +4,31 @@ Offline gameplay-data extractor for [NEOTOKYO;REBUILD](https://github.com/Neotok
 (NT;RE) demo files. Reads `.dem` recordings and writes gameplay data to SQLite.
 The crate/binary is named `ntre-demo-dumper`.
 
-## What it extracts (phase 1)
+## What it extracts
 
-- **Demo metadata** — map, server, recorder, duration, tickrate (from the fixed
+- **Demo metadata:** map, server, recorder, duration, tickrate (from the fixed
   1072-byte `HL2DEMO` header; NT;RE demos are demo protocol 3 / network protocol 24,
   same engine branch as TF2).
-- **Announcements** — round starts, round winners, ghost captures, with tick and
+- **Announcements:** round starts, round winners, ghost captures, with tick and
   wall-clock timestamps.
-- **Rounds** — derived start/end tick, winner, and win reason per round.
-- **Recorder POV** — position and view angles every packet frame (~66/s), ready
+- **Rounds:** derived start/end tick, winner, and win reason per round.
+- **Recorder POV:** position and view angles every packet frame (~66/s), ready
   for heatmaps of the recording player.
-- **Recorder inputs** — per-tick buttons (fire, jump, duck, reload, sprint, and
+- **Recorder inputs:** per-tick buttons (fire, jump, duck, reload, sprint, and
   NEO's aim/lean/thermoptic/vision), movement axes, mouse deltas, and weapon
   switches, decoded from `dem_usercmd` frames. Convenience boolean columns are
   generated from the raw buttons field.
 - **Console commands** issued by the recorder.
-- **Kill feed** — NT;RE's `player_death` game event: victim, attacker, assists,
+- **Kill feed:** NT;RE's `player_death` game event: victim, attacker, assists,
   weapon, headshot/suicide/explosive/ghoster flags, with names resolved via the
   roster.
-- **Player roster** — name, userid, SteamID, bot flag, from the string-table
+- **Player roster:** name, userid, SteamID, bot flag, from the string-table
   dump at recording start plus connect events for late joiners.
-- **Chat** — SayText2 user messages.
-- **All game events** — every event in the demo (ghost captures, rank changes,
-  round transitions…), decoded generically against the demo's own event
+- **Chat:** SayText2 user messages.
+- **All game events:** every event in the demo (ghost captures, rank changes,
+  round transitions), decoded generically against the demo's own event
   definitions and stored with fields as JSON (query with SQLite's `json_extract`).
-- **All-player entity samples** — position, eye angles, active weapon, health,
+- **All-player entity samples:** position, eye angles, active weapon, health,
   team, and life state for every player, on change (~66/s while moving),
   decoded from delta-compressed entity updates via the demo's own sendtables.
   Note: a POV demo only contains entities within the recorder's PVS; SourceTV
@@ -39,24 +39,23 @@ The crate/binary is named `ntre-demo-dumper`.
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the layer layout and how to add a
 new extractor.
 
-The demo is walked frame by frame (each frame header carries its command, tick,
-and payload length — fully deterministic and byte-aligned). Packet payloads are
-bit-packed net messages, so instead of decoding the whole net protocol, each
-payload is scanned at all 8 bit alignments for printable ASCII runs, which are
-then matched against announcement patterns. Skimming is parallelized across all
-available cores.
+The demo is walked frame by frame; each frame header carries its command,
+tick, and payload length, so the walk is deterministic and byte-aligned.
+Three kinds of extraction run over it:
 
-Planned next phases: real net-message parsing for the kill feed, chat, and
-player roster (phase 2), and sendtable-driven entity decoding for all-player
-positions/aim vectors (phase 3, likely building on
-[tf-demo-parser](https://github.com/demostf/parser) since NT;RE shares TF2's
-engine branch).
+- **Net-message parsing:** packet payloads are decoded as bit-packed net
+  messages, producing the kill feed, chat, roster, and game events.
+- **Entity decoding:** a separate whole-file pass decodes delta-compressed
+  entity updates via the demo's own sendtables, producing `player_samples`.
+- **ASCII skim:** payloads are also scanned at all 8 bit alignments for
+  printable text, which yields the announcements. Skimming is parallelized
+  across all available cores.
 
 ## Building (atomic hosts)
 
 Two container options are provided.
 
-**Dev Container standard** (`.devcontainer/devcontainer.json`) — works with VS Code,
+**Dev Container standard** (`.devcontainer/devcontainer.json`) works with VS Code,
 the `devcontainer` CLI, or plain docker/podman:
 
 ```sh
@@ -72,7 +71,7 @@ distrobox enter ntre-dev -- cargo build --release
 distrobox enter ntre-dev -- cargo test
 ```
 
-On a mutable host, plain `cargo build --release` works — the only system
+On a mutable host, plain `cargo build --release` works; the only system
 dependency is a C compiler (SQLite is bundled).
 
 ## Usage
@@ -85,10 +84,10 @@ ntre-demo-dumper --match 'REGEX' my.dem      # capture extra announcement patter
 ntre-demo-dumper --all-strings my.dem        # exploratory: keep every recovered string
 ```
 
-Tables: `demos`, `announcements`, `rounds`, `pov_samples`, `recorder_inputs`,
-`console_cmds`, `players`, `kills`, `chat`, `game_events`, `player_samples` —
-see [SCHEMA.md](SCHEMA.md) for column semantics, join keys, and example
-queries. `.schema` in the sqlite3 shell also shows the commented DDL.
+Eleven tables cover metadata, announcements, rounds, roster, kills, chat,
+game events, and per-tick samples. See [SCHEMA.md](SCHEMA.md) for the table
+list, column semantics, join keys, and example queries; `.schema` in the
+sqlite3 shell shows the commented DDL.
 
 ## License
 

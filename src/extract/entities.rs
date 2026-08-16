@@ -1,18 +1,15 @@
 //! All-player entity samples: position, eye angles, active weapon, health,
-//! team, life state — decoded from svc_PacketEntities via tf-demo-parser's
-//! sendtable machinery (definition-driven, so NT;RE's custom classes and
-//! props decode without any TF2 assumptions; see ARCHITECTURE.md for why its
-//! typed game events are NOT safe while its entity decoding is).
+//! team, and life state, decoded from svc_PacketEntities via
+//! tf-demo-parser's sendtable machinery. Decoding is definition-driven, so
+//! NT;RE's custom classes and props need no TF2 assumptions (see
+//! ARCHITECTURE.md; the library's typed game events are NOT safe, while its
+//! entity decoding is).
 //!
-//! This is a whole-file pass, not a `FrameExtractor`: tf-demo-parser owns
-//! its own demo walk. The pipeline runs it alongside the frame pass. A demo
-//! that trips the entity decoder mid-file still yields every sample decoded
-//! up to that point, plus a warning — the frame-level extractors are never
-//! affected.
-//!
-//! POV demos only contain entities inside the recorder's PVS: other players
-//! are sampled while visible/nearby. `in_pvs = 0` rows mark when a player
-//! left the recorder's PVS (position is their last known).
+//! This is a whole-file pass, not a `FrameExtractor`, because tf-demo-parser
+//! owns its own demo walk. A mid-file decode error degrades to a warning and
+//! keeps every sample decoded so far; frame-level extractors are never
+//! affected. See SCHEMA.md for the POV-demo PVS caveat and the meaning of
+//! `in_pvs = 0` rows.
 
 use anyhow::Result;
 use std::collections::HashMap;

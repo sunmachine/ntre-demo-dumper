@@ -21,7 +21,7 @@ pub struct Announcement {
 }
 
 /// Announcement texts extracted by default. Each pattern's *match* is what
-/// gets stored — the bit-shifted extraction leaves garbage bytes around the
+/// gets stored; the bit-shifted extraction leaves garbage bytes around the
 /// real message, so patterns must cover the full text they want kept.
 pub const DEFAULT_PATTERNS: &[&str] = &[
     r"- [A-Z]+ ROUND \d+ STARTED -",
