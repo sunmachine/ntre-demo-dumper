@@ -194,6 +194,11 @@ impl Db {
         Ok(self.conn.execute_batch("COMMIT")?)
     }
 
+    /// Abandon the current transaction (fails harmlessly if none is open).
+    pub fn rollback(&self) -> Result<()> {
+        Ok(self.conn.execute_batch("ROLLBACK")?)
+    }
+
     pub fn insert_demo(&self, path: &str, h: &DemoHeader) -> Result<i64> {
         self.conn.execute(
             "INSERT INTO demos (path, demo_protocol, network_protocol, server, client, map,

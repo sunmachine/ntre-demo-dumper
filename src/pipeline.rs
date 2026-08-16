@@ -5,6 +5,7 @@
 
 use anyhow::{Context, Result};
 use regex::Regex;
+use std::io::IsTerminal;
 use std::path::Path;
 use std::time::Instant;
 
@@ -18,6 +19,33 @@ pub struct Options {
     pub all_strings: bool,
     pub pov_sample: u32,
     pub threads: usize,
+}
+
+pub enum LogLevel {
+    Warning,
+    Error,
+}
+
+/// Print collected log lines as a `logs:` section, with the level colored
+/// when stdout is a terminal (yellow warning, red error; NO_COLOR disables).
+/// Goes to stdout so it can't interleave out of order with the surrounding
+/// report. No-op when there is nothing to report.
+pub fn print_logs(logs: &[(LogLevel, String)]) {
+    if logs.is_empty() {
+        return;
+    }
+    let color = std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();
+    println!("  logs:");
+    for (level, message) in logs {
+        let label = match (level, color) {
+            (LogLevel::Warning, true) => "\x1b[33mwarning\x1b[0m",
+            (LogLevel::Warning, false) => "warning",
+            (LogLevel::Error, true) => "\x1b[31merror\x1b[0m",
+            (LogLevel::Error, false) => "error",
+        };
+        println!("    {label}: {message}");
+    }
+    println!();
 }
 
 pub fn parse_one(path: &Path, db: &Db, opts: &Options) -> Result<()> {
@@ -58,10 +86,11 @@ pub fn parse_one(path: &Path, db: &Db, opts: &Options) -> Result<()> {
 
     // Whole-file entity pass (all-player positions/aim/weapons); a failure
     // here degrades to a warning and never blocks the frame-level data.
+    let mut logs: Vec<(LogLevel, String)> = Vec::new();
     let entity_output = match entities::run(&data) {
         Ok(output) => Some(output),
         Err(e) => {
-            eprintln!("  warning: entity pass failed: {e}");
+            logs.push((LogLevel::Warning, format!("entity pass failed: {e}")));
             None
         }
     };
@@ -76,15 +105,19 @@ pub fn parse_one(path: &Path, db: &Db, opts: &Options) -> Result<()> {
         db.insert_player_samples(demo_id, &output.samples)?;
         summary.push(("player samples".into(), output.samples.len()));
         if output.player_classes.is_empty() {
-            eprintln!("  warning: no player classes found in sendtables (entity samples empty?)");
+            logs.push((
+                LogLevel::Warning,
+                "no player classes found in sendtables (entity samples empty?)".into(),
+            ));
         }
         if let Some(warning) = &output.warning {
-            eprintln!("  warning: {warning}");
+            logs.push((LogLevel::Warning, warning.clone()));
         }
     }
     db.commit()?;
 
     println!();
+    print_logs(&logs);
     println!("  demo #{demo_id} extracted");
     let width = summary.iter().map(|(l, _)| l.len()).max().unwrap_or(0).max("parsed in".len());
     for (label, count) in &summary {
