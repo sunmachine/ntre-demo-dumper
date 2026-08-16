@@ -1,0 +1,41 @@
+name: "📦 Release"
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release:
+    name: Build and publish release (linux x86_64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Require a tag ref
+        if: github.ref_type != 'tag'
+        run: |
+          echo "Run this workflow from a v* tag (manual runs: pick the tag under 'Use workflow from')." >&2
+          exit 1
+      - name: Build
+        run: cargo build --release --locked
+      - name: Package
+        run: |
+          name="ntre-demo-dumper-${GITHUB_REF_NAME}-linux-x86_64"
+          mkdir "$name"
+          cp target/release/ntre-demo-dumper LICENSE.md README.md SCHEMA.md "$name"/
+          strip "$name/ntre-demo-dumper"
+          tar czf "$name.tar.gz" "$name"
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            ntre-demo-dumper-*.tar.gz
