@@ -73,8 +73,8 @@ Kill feed from NT;RE's own `player_death` game event definition.
 
 ### `rounds`
 
-Derived heuristically from start/win announcements, not from a wire-format
-fact.
+Derived heuristically from start/win announcements. `round_starts` holds the
+wire-fact start events; this table adds winners and end ticks.
 
 | column | meaning |
 |---|---|
@@ -140,6 +140,63 @@ fire, 11), `reload` (13), `sprint` (17), `zoom` (19), and NT;RE's `aim` (27),
 Aiming caveat: use `zoom` for "was the player aiming"; it is the held
 aim-down-sights state. `aim` is NT;RE's ADS-toggle keybind, set only on the
 tick the key is tapped, and stays 0 for players on the default `+zoom` bind.
+
+### `player_pings`
+
+In-game location pings, from `player_ping` game events. All players' pings
+are present, not just the recorder's.
+
+| column | meaning |
+|---|---|
+| `tick` | when the ping was placed |
+| `userid` | pinging player; joins `players.userid` |
+| `team` | pinging player's team, coded as in `player_samples.team` |
+| `x`, `y`, `z` | pinged world position |
+| `ghoster_ping` | the event's `ghosterping` flag |
+
+### `ghost_callouts`
+
+Automatic enemy-position callouts generated while a player carries the
+ghost, from `ghost_enemy_callout` game events. A log of the enemy intel the
+carrier's team received.
+
+| column | meaning |
+|---|---|
+| `tick` | when the callout fired |
+| `userid` | ghost carrier; joins `players.userid` |
+| `team` | carrier's team, coded as in `player_samples.team` |
+| `target_userid` | spotted enemy; joins `players.userid` |
+| `x`, `y`, `z` | spotted enemy's world position |
+
+### `team_scores`
+
+Cumulative team score updates, from `team_score` game events. One row per
+update; the latest row at or before a tick is the score at that tick.
+Columns: `tick`, `team` (2 Jinrai, 3 NSF), `score`.
+
+### `team_changes`
+
+Team joins and switches, from `player_team` game events.
+
+| column | meaning |
+|---|---|
+| `tick` | when the change happened |
+| `userid` | joins `players.userid` |
+| `team`, `old_team` | new and previous team, coded as in `player_samples.team` |
+| `disconnect` | 1 when the change is a player disconnecting |
+
+### `rank_changes`
+
+Rank progression, from `player_rankchange` game events. Columns: `tick`,
+`userid` (joins `players.userid`), `old_rank`, `new_rank` (rank index,
+increasing with XP).
+
+### `round_starts`
+
+Round starts as wire facts, from `round_start` game events. Unlike `rounds`,
+these carry no winner. Columns: `tick`, `objective`, `timelimit`,
+`fraglimit`. Caveat: observed demos report `objective` as `DEATHMATCH` even
+in capture-the-ghost games, so treat it with suspicion.
 
 ### `chat`
 

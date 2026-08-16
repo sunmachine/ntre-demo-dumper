@@ -33,6 +33,54 @@ pub struct ChatLine {
     pub team_chat: bool,
 }
 
+pub struct Ping {
+    pub tick: i32,
+    pub userid: u32,
+    pub team: i64,
+    pub x: i64,
+    pub y: i64,
+    pub z: i64,
+    pub ghoster_ping: bool,
+}
+
+pub struct GhostCallout {
+    pub tick: i32,
+    pub userid: u32,
+    pub team: i64,
+    pub target_userid: u32,
+    pub x: i64,
+    pub y: i64,
+    pub z: i64,
+}
+
+pub struct TeamScore {
+    pub tick: i32,
+    pub team: i64,
+    pub score: i64,
+}
+
+pub struct TeamChange {
+    pub tick: i32,
+    pub userid: u32,
+    pub team: i64,
+    pub old_team: i64,
+    pub disconnect: bool,
+}
+
+pub struct RankChange {
+    pub tick: i32,
+    pub userid: u32,
+    pub old_rank: i64,
+    pub new_rank: i64,
+}
+
+pub struct RoundStart {
+    pub tick: i32,
+    pub objective: String,
+    pub timelimit: i64,
+    pub fraglimit: i64,
+}
+
 pub struct Player {
     pub entity_id: u32,
     pub user_id: u32,
@@ -47,6 +95,12 @@ pub struct NetPass {
     defs: EventDefs,
     pub events: Vec<(i32, String, String)>, // tick, name, fields as JSON
     pub kills: Vec<Kill>,
+    pub pings: Vec<Ping>,
+    pub callouts: Vec<GhostCallout>,
+    pub team_scores: Vec<TeamScore>,
+    pub team_changes: Vec<TeamChange>,
+    pub rank_changes: Vec<RankChange>,
+    pub round_starts: Vec<RoundStart>,
     pub chat: Vec<ChatLine>,
     pub players: HashMap<u32, Player>, // by userid
     warnings: usize,
@@ -159,6 +213,48 @@ impl NetPass {
                 suicide: bool_field(fields, "suicide"),
                 explosive: bool_field(fields, "explosive"),
                 ghoster: bool_field(fields, "ghoster"),
+            }),
+            "player_ping" => self.pings.push(Ping {
+                tick,
+                userid: id_field(fields, "userid"),
+                team: int_field(fields, "playerteam"),
+                x: int_field(fields, "pingx"),
+                y: int_field(fields, "pingy"),
+                z: int_field(fields, "pingz"),
+                ghoster_ping: bool_field(fields, "ghosterping"),
+            }),
+            "ghost_enemy_callout" => self.callouts.push(GhostCallout {
+                tick,
+                userid: id_field(fields, "userid"),
+                team: int_field(fields, "team"),
+                target_userid: id_field(fields, "targetid"),
+                x: int_field(fields, "targetx"),
+                y: int_field(fields, "targety"),
+                z: int_field(fields, "targetz"),
+            }),
+            "team_score" => self.team_scores.push(TeamScore {
+                tick,
+                team: int_field(fields, "teamid"),
+                score: int_field(fields, "score"),
+            }),
+            "player_team" => self.team_changes.push(TeamChange {
+                tick,
+                userid: id_field(fields, "userid"),
+                team: int_field(fields, "team"),
+                old_team: int_field(fields, "oldteam"),
+                disconnect: bool_field(fields, "disconnect"),
+            }),
+            "player_rankchange" => self.rank_changes.push(RankChange {
+                tick,
+                userid: id_field(fields, "userid"),
+                old_rank: int_field(fields, "oldRank"),
+                new_rank: int_field(fields, "newRank"),
+            }),
+            "round_start" => self.round_starts.push(RoundStart {
+                tick,
+                objective: str_field(fields, "objective"),
+                timelimit: int_field(fields, "timelimit"),
+                fraglimit: int_field(fields, "fraglimit"),
             }),
             // player_connect_client is what NT;RE actually fires for joins
             // (bots included) observed mid-recording.
@@ -283,11 +379,23 @@ impl FrameExtractor for NetPass {
             self.players.get(&userid).map(|p| p.name.clone())
         };
         db.insert_kills(demo_id, &self.kills, &name_of)?;
+        db.insert_player_pings(demo_id, &self.pings)?;
+        db.insert_ghost_callouts(demo_id, &self.callouts)?;
+        db.insert_team_scores(demo_id, &self.team_scores)?;
+        db.insert_team_changes(demo_id, &self.team_changes)?;
+        db.insert_rank_changes(demo_id, &self.rank_changes)?;
+        db.insert_round_starts(demo_id, &self.round_starts)?;
         db.insert_chat(demo_id, &self.chat)?;
         db.insert_game_events(demo_id, &self.events)?;
         let mut summary: Summary = vec![
             ("players".into(), self.players.len()),
             ("kills".into(), self.kills.len()),
+            ("player pings".into(), self.pings.len()),
+            ("ghost callouts".into(), self.callouts.len()),
+            ("team scores".into(), self.team_scores.len()),
+            ("team changes".into(), self.team_changes.len()),
+            ("rank changes".into(), self.rank_changes.len()),
+            ("round starts".into(), self.round_starts.len()),
             ("chat lines".into(), self.chat.len()),
             ("game events".into(), self.events.len()),
         ];

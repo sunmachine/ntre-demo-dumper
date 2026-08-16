@@ -134,6 +134,70 @@ CREATE TABLE IF NOT EXISTS kills (
     ghoster INTEGER NOT NULL          -- victim was carrying the ghost
 );
 
+-- In-game location pings (player_ping game events).
+CREATE TABLE IF NOT EXISTS player_pings (
+    id INTEGER PRIMARY KEY,
+    demo_id INTEGER NOT NULL REFERENCES demos(id),
+    tick INTEGER NOT NULL,
+    userid INTEGER NOT NULL,      -- pinging player; joins players.userid
+    team INTEGER NOT NULL,        -- pinging player's team
+    x INTEGER NOT NULL, y INTEGER NOT NULL, z INTEGER NOT NULL,  -- pinged position
+    ghoster_ping INTEGER NOT NULL -- the event's ghosterping flag
+);
+
+-- Automatic enemy-position callouts while the ghost is held
+-- (ghost_enemy_callout game events).
+CREATE TABLE IF NOT EXISTS ghost_callouts (
+    id INTEGER PRIMARY KEY,
+    demo_id INTEGER NOT NULL REFERENCES demos(id),
+    tick INTEGER NOT NULL,
+    userid INTEGER NOT NULL,        -- ghost carrier; joins players.userid
+    team INTEGER NOT NULL,          -- carrier's team
+    target_userid INTEGER NOT NULL, -- spotted enemy; joins players.userid
+    x INTEGER NOT NULL, y INTEGER NOT NULL, z INTEGER NOT NULL  -- spotted position
+);
+
+-- Cumulative team score updates (team_score game events).
+CREATE TABLE IF NOT EXISTS team_scores (
+    id INTEGER PRIMARY KEY,
+    demo_id INTEGER NOT NULL REFERENCES demos(id),
+    tick INTEGER NOT NULL,
+    team INTEGER NOT NULL,   -- 2 Jinrai, 3 NSF
+    score INTEGER NOT NULL   -- team's score as of this tick
+);
+
+-- Team joins and switches (player_team game events).
+CREATE TABLE IF NOT EXISTS team_changes (
+    id INTEGER PRIMARY KEY,
+    demo_id INTEGER NOT NULL REFERENCES demos(id),
+    tick INTEGER NOT NULL,
+    userid INTEGER NOT NULL,     -- joins players.userid
+    team INTEGER NOT NULL,       -- new team
+    old_team INTEGER NOT NULL,
+    disconnect INTEGER NOT NULL  -- 1 when the change is a disconnect
+);
+
+-- Rank progression (player_rankchange game events).
+CREATE TABLE IF NOT EXISTS rank_changes (
+    id INTEGER PRIMARY KEY,
+    demo_id INTEGER NOT NULL REFERENCES demos(id),
+    tick INTEGER NOT NULL,
+    userid INTEGER NOT NULL,  -- joins players.userid
+    old_rank INTEGER NOT NULL,
+    new_rank INTEGER NOT NULL
+);
+
+-- Round starts as wire facts (round_start game events); the rounds table
+-- is derived from announcements instead.
+CREATE TABLE IF NOT EXISTS round_starts (
+    id INTEGER PRIMARY KEY,
+    demo_id INTEGER NOT NULL REFERENCES demos(id),
+    tick INTEGER NOT NULL,
+    objective TEXT NOT NULL,     -- unreliable: DEATHMATCH even in CTG games
+    timelimit INTEGER NOT NULL,
+    fraglimit INTEGER NOT NULL
+);
+
 -- Chat lines (SayText2 user messages).
 CREATE TABLE IF NOT EXISTS chat (
     id INTEGER PRIMARY KEY,
@@ -336,6 +400,101 @@ impl Db {
                 k.explosive,
                 k.ghoster,
             ])?;
+        }
+        Ok(())
+    }
+
+    pub fn insert_player_pings(
+        &self,
+        demo_id: i64,
+        pings: &[crate::extract::net::Ping],
+    ) -> Result<()> {
+        let mut ins = self.conn.prepare(
+            "INSERT INTO player_pings (demo_id, tick, userid, team, x, y, z, ghoster_ping)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        )?;
+        for p in pings {
+            ins.execute(rusqlite::params![
+                demo_id, p.tick, p.userid, p.team, p.x, p.y, p.z, p.ghoster_ping,
+            ])?;
+        }
+        Ok(())
+    }
+
+    pub fn insert_ghost_callouts(
+        &self,
+        demo_id: i64,
+        callouts: &[crate::extract::net::GhostCallout],
+    ) -> Result<()> {
+        let mut ins = self.conn.prepare(
+            "INSERT INTO ghost_callouts (demo_id, tick, userid, team, target_userid, x, y, z)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        )?;
+        for c in callouts {
+            ins.execute(rusqlite::params![
+                demo_id, c.tick, c.userid, c.team, c.target_userid, c.x, c.y, c.z,
+            ])?;
+        }
+        Ok(())
+    }
+
+    pub fn insert_team_scores(
+        &self,
+        demo_id: i64,
+        scores: &[crate::extract::net::TeamScore],
+    ) -> Result<()> {
+        let mut ins = self.conn.prepare(
+            "INSERT INTO team_scores (demo_id, tick, team, score) VALUES (?1, ?2, ?3, ?4)",
+        )?;
+        for s in scores {
+            ins.execute(rusqlite::params![demo_id, s.tick, s.team, s.score])?;
+        }
+        Ok(())
+    }
+
+    pub fn insert_team_changes(
+        &self,
+        demo_id: i64,
+        changes: &[crate::extract::net::TeamChange],
+    ) -> Result<()> {
+        let mut ins = self.conn.prepare(
+            "INSERT INTO team_changes (demo_id, tick, userid, team, old_team, disconnect)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        )?;
+        for c in changes {
+            ins.execute(rusqlite::params![
+                demo_id, c.tick, c.userid, c.team, c.old_team, c.disconnect,
+            ])?;
+        }
+        Ok(())
+    }
+
+    pub fn insert_rank_changes(
+        &self,
+        demo_id: i64,
+        changes: &[crate::extract::net::RankChange],
+    ) -> Result<()> {
+        let mut ins = self.conn.prepare(
+            "INSERT INTO rank_changes (demo_id, tick, userid, old_rank, new_rank)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+        )?;
+        for c in changes {
+            ins.execute(rusqlite::params![demo_id, c.tick, c.userid, c.old_rank, c.new_rank])?;
+        }
+        Ok(())
+    }
+
+    pub fn insert_round_starts(
+        &self,
+        demo_id: i64,
+        starts: &[crate::extract::net::RoundStart],
+    ) -> Result<()> {
+        let mut ins = self.conn.prepare(
+            "INSERT INTO round_starts (demo_id, tick, objective, timelimit, fraglimit)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+        )?;
+        for s in starts {
+            ins.execute(rusqlite::params![demo_id, s.tick, s.objective, s.timelimit, s.fraglimit])?;
         }
         Ok(())
     }
