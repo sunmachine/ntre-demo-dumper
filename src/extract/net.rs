@@ -117,11 +117,16 @@ fn field<'a>(fields: &'a [(String, EventValue)], name: &str) -> Option<&'a Event
     fields.iter().find(|(n, _)| n == name).map(|(_, v)| v)
 }
 
-fn int_field(fields: &[(String, EventValue)], name: &str) -> u32 {
+fn int_field(fields: &[(String, EventValue)], name: &str) -> i64 {
     match field(fields, name) {
-        Some(EventValue::Int(n)) => *n,
+        Some(EventValue::Int(n)) => *n as i64,
         _ => 0,
     }
+}
+
+/// `int_field` for id-like fields that are never negative in practice.
+fn id_field(fields: &[(String, EventValue)], name: &str) -> u32 {
+    int_field(fields, name).max(0) as u32
 }
 
 fn bool_field(fields: &[(String, EventValue)], name: &str) -> bool {
@@ -146,9 +151,9 @@ impl NetPass {
         match name {
             "player_death" => self.kills.push(Kill {
                 tick,
-                victim_userid: int_field(fields, "userid"),
-                attacker_userid: int_field(fields, "attacker"),
-                assists: int_field(fields, "assists"),
+                victim_userid: id_field(fields, "userid"),
+                attacker_userid: id_field(fields, "attacker"),
+                assists: id_field(fields, "assists"),
                 weapon: str_field(fields, "weapon"),
                 headshot: bool_field(fields, "headshot"),
                 suicide: bool_field(fields, "suicide"),
@@ -158,9 +163,9 @@ impl NetPass {
             // player_connect_client is what NT;RE actually fires for joins
             // (bots included) observed mid-recording.
             "player_connect" | "player_connect_client" | "player_info" => {
-                let user_id = int_field(fields, "userid");
+                let user_id = id_field(fields, "userid");
                 self.players.entry(user_id).or_insert_with(|| Player {
-                    entity_id: int_field(fields, "index") + 1,
+                    entity_id: id_field(fields, "index") + 1,
                     user_id,
                     name: str_field(fields, "name"),
                     steam_id: str_field(fields, "networkid"),
@@ -169,7 +174,7 @@ impl NetPass {
                 });
             }
             "player_changename" | "player_changeneoname" => {
-                let user_id = int_field(fields, "userid");
+                let user_id = id_field(fields, "userid");
                 if let Some(p) = self.players.get_mut(&user_id) {
                     let newname = str_field(fields, "newname");
                     if !newname.is_empty() {

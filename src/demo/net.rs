@@ -38,7 +38,7 @@ pub type EventDefs = HashMap<u16, EventDef>;
 pub enum EventValue {
     Str(String),
     Float(f32),
-    Int(u32),
+    Int(i32),
     Bool(bool),
 }
 
@@ -397,6 +397,36 @@ mod tests {
         assert_eq!(kind, 4);
     }
 
+    /// Short and long fields must sign-extend; byte must not.
+    #[test]
+    fn event_ints_are_signed_except_byte() {
+        let mut defs_w = BitWriter::default();
+        defs_w.write_bits(1, 9);
+        defs_w.write_string("ping");
+        for (name, kind) in [("x", 4u32), ("big", 3), ("small", 5)] {
+            defs_w.write_bits(kind, 3);
+            defs_w.write_string(name);
+        }
+        defs_w.write_bits(0, 3);
+        let defs = parse_event_list(
+            &BitChunk { bytes: defs_w.bytes.clone(), bit_len: defs_w.bytes.len() * 8 },
+            1,
+        )
+        .unwrap();
+
+        let mut ev = BitWriter::default();
+        ev.write_bits(1, 9);
+        ev.write_bits(-880i16 as u16 as u32, 16); // short
+        ev.write_bits(-70000i32 as u32, 32); // long
+        ev.write_bits(200, 8); // byte: unsigned
+        let (_, fields) =
+            parse_game_event(&BitChunk { bytes: ev.bytes, bit_len: 0 }, &defs).unwrap();
+        let get = |n: &str| fields.iter().find(|(f, _)| f == n).map(|(_, v)| v.clone());
+        assert!(matches!(get("x"), Some(EventValue::Int(-880))));
+        assert!(matches!(get("big"), Some(EventValue::Int(-70000))));
+        assert!(matches!(get("small"), Some(EventValue::Int(200))));
+    }
+
     /// Skippable messages must consume exactly their wire size.
     #[test]
     fn skips_messages_without_desync() {
@@ -440,9 +470,11 @@ pub fn parse_game_event(
         let value = match entry.kind {
             1 => EventValue::Str(r.read_string()?),
             2 => EventValue::Float(r.read_f32()?),
-            3 => EventValue::Int(r.read_bits(32)?),
-            4 => EventValue::Int(r.read_bits(16)?),
-            5 => EventValue::Int(r.read_bits(8)?),
+            // Short and long are signed, byte is unsigned, matching the
+            // engine's WriteShort/WriteLong/WriteByte.
+            3 => EventValue::Int(r.read_bits(32)? as i32),
+            4 => EventValue::Int(r.read_bits(16)? as u16 as i16 as i32),
+            5 => EventValue::Int(r.read_bits(8)? as i32),
             6 => EventValue::Bool(r.read_bit()?),
             7 => continue, // local: not transmitted
             other => bail!("unknown game event value type {other}"),

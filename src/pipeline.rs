@@ -77,16 +77,26 @@ pub fn parse_one(path: &Path, db: &Db, opts: &Options) -> Result<()> {
         Box::new(net::NetPass::default()),
     ];
 
+    let mut logs: Vec<(LogLevel, String)> = Vec::new();
+
+    // A demo stopped mid-write can end partway through a frame; keep
+    // everything extracted before the break and warn instead of failing.
     for frame in FrameIter::new(&data, HEADER_SIZE) {
-        let frame = frame?;
-        for extractor in &mut extractors {
-            extractor.on_frame(&ctx, &frame);
+        match frame {
+            Ok(frame) => {
+                for extractor in &mut extractors {
+                    extractor.on_frame(&ctx, &frame);
+                }
+            }
+            Err(e) => {
+                logs.push((LogLevel::Warning, format!("frame walk stopped early: {e}")));
+                break;
+            }
         }
     }
 
     // Whole-file entity pass (all-player positions/aim/weapons); a failure
     // here degrades to a warning and never blocks the frame-level data.
-    let mut logs: Vec<(LogLevel, String)> = Vec::new();
     let entity_output = match entities::run(&data) {
         Ok(output) => Some(output),
         Err(e) => {
