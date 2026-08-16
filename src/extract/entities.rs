@@ -43,8 +43,38 @@ pub struct PlayerSample {
     pub in_pvs: bool,
 }
 
+/// One on-change position sample of a ghost entity.
+pub struct GhostSample {
+    pub tick: u32,
+    pub entity_id: u32,
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+}
+
+/// One on-change reading of a victim's per-attacker damage accumulator.
+pub struct DamageSample {
+    pub tick: u32,
+    pub victim_entity_id: u32,
+    pub attacker_entity_id: u32,
+    pub damage: f32,
+}
+
+/// One on-change scoreboard sample from the player resource entity.
+pub struct ResourceSample {
+    pub tick: u32,
+    pub entity_id: u32,
+    pub xp: i64,
+    pub score: i64,
+    pub deaths: i64,
+    pub ping: i64,
+}
+
 pub struct EntityOutput {
     pub samples: Vec<PlayerSample>,
+    pub ghost_samples: Vec<GhostSample>,
+    pub resource_samples: Vec<ResourceSample>,
+    pub damage_samples: Vec<DamageSample>,
     pub player_classes: Vec<String>,
     pub warning: Option<String>,
 }
@@ -86,20 +116,41 @@ struct PlayerState {
     class_num: i64,
     camo: bool,
     life_state: i64,
+    /// last seen m_rfAttackersAccumlator values, indexed by attacker entity
+    attackers: Vec<f32>,
+}
+
+#[derive(Default, Clone)]
+struct ResourceState {
+    xp: i64,
+    score: i64,
+    deaths: i64,
+    ping: i64,
 }
 
 #[derive(Default)]
 struct EntityAnalyser {
     /// prop identifier -> bare prop name, for every prop in the sendtables
     prop_names: HashMap<SendPropIdentifier, String>,
+    /// array-element props (numeric names): identifier -> (owner table, index)
+    array_props: HashMap<SendPropIdentifier, (String, u32)>,
     /// server class id (as usize) -> class name
     class_names: Vec<String>,
     /// class ids whose name ends with "Player" (the mod's player classes)
     player_classes: Vec<u16>,
+    /// class ids whose name ends with "WeaponGhost" (the objective)
+    ghost_classes: Vec<u16>,
+    /// class ids whose name ends with "PlayerResource" (scoreboard arrays)
+    resource_classes: Vec<u16>,
     /// entity id -> class id, tracked from Enter updates (weapon lookups)
     entity_classes: HashMap<u32, u16>,
     players: HashMap<u32, PlayerState>,
+    ghosts: HashMap<u32, (f32, f32, f32)>,
+    resource: HashMap<u32, ResourceState>,
     samples: Vec<PlayerSample>,
+    ghost_samples: Vec<GhostSample>,
+    resource_samples: Vec<ResourceSample>,
+    damage_samples: Vec<DamageSample>,
 }
 
 const EHANDLE_ENTITY_MASK: i64 = (1 << 11) - 1;
@@ -132,6 +183,16 @@ impl EntityAnalyser {
             self.entity_classes.insert(entity_id, id);
             id
         };
+
+        if self.ghost_classes.contains(&class_id) {
+            self.apply_ghost(tick, entity_id, entity, state);
+            return;
+        }
+
+        if self.resource_classes.contains(&class_id) {
+            self.apply_resource(tick, entity, state);
+            return;
+        }
 
         if !self.player_classes.contains(&class_id) {
             return;
@@ -214,12 +275,112 @@ impl EntityAnalyser {
                     player.life_state = *life;
                     changed = true;
                 }
+                // Legacy SendPropArray: arrives whole, 1-indexed by attacker
+                // entity id. The server keeps only the sub-1.0 fractional
+                // carry of damage here, so a change marks a hit landing, not
+                // an amount. Diff against the last reading; not a
+                // player_samples column, so it never sets `changed`.
+                ("m_rfAttackersAccumlator" | "m_rflAttackersAccumlator",
+                    SendPropValue::Array(values)) => {
+                    if player.attackers.len() < values.len() {
+                        player.attackers.resize(values.len(), 0.0);
+                    }
+                    for (i, value) in values.iter().enumerate() {
+                        let SendPropValue::Float(dmg) = value else {
+                            continue;
+                        };
+                        if i > 0 && player.attackers[i] != *dmg {
+                            player.attackers[i] = *dmg;
+                            self.damage_samples.push(DamageSample {
+                                tick,
+                                victim_entity_id: entity_id,
+                                attacker_entity_id: i as u32,
+                                damage: *dmg,
+                            });
+                        }
+                    }
+                }
                 _ => {}
             }
         }
         if changed {
             let p = player.clone();
             self.push_sample(tick, entity_id, &p, true);
+        }
+    }
+
+    fn apply_ghost(&mut self, tick: u32, entity_id: u32, entity: &PacketEntity, state: &ParserState) {
+        use tf_demo_parser::demo::message::packetentities::UpdateType;
+        if entity.update_type == UpdateType::Delete {
+            self.ghosts.remove(&entity_id);
+            return;
+        }
+        let mut changed = false;
+        let pos = self.ghosts.entry(entity_id).or_default();
+        for prop in entity.props(state) {
+            let Some(name) = self.prop_names.get(&prop.identifier) else {
+                continue;
+            };
+            match (name.as_str(), &prop.value) {
+                ("m_vecOrigin", SendPropValue::Vector(v)) => {
+                    (pos.0, pos.1, pos.2) = (v.x, v.y, v.z);
+                    changed = true;
+                }
+                ("m_vecOrigin", SendPropValue::VectorXY(v)) => {
+                    (pos.0, pos.1) = (v.x, v.y);
+                    changed = true;
+                }
+                ("m_vecOrigin[2]", SendPropValue::Float(z)) => {
+                    pos.2 = *z;
+                    changed = true;
+                }
+                _ => {}
+            }
+        }
+        if changed {
+            let (x, y, z) = *pos;
+            self.ghost_samples.push(GhostSample { tick, entity_id, x, y, z });
+        }
+    }
+
+    fn apply_resource(&mut self, tick: u32, entity: &PacketEntity, state: &ParserState) {
+        use tf_demo_parser::demo::message::packetentities::UpdateType;
+        if entity.update_type == UpdateType::Delete {
+            return;
+        }
+        let mut changed: Vec<u32> = Vec::new();
+        for prop in entity.props(state) {
+            let Some((table, index)) = self.array_props.get(&prop.identifier) else {
+                continue;
+            };
+            let SendPropValue::Integer(v) = &prop.value else {
+                continue;
+            };
+            let entry = self.resource.entry(*index).or_default();
+            let field = match table.as_str() {
+                "m_iXP" => &mut entry.xp,
+                "m_iScore" => &mut entry.score,
+                "m_iDeaths" => &mut entry.deaths,
+                "m_iPing" => &mut entry.ping,
+                _ => continue,
+            };
+            if *field != *v {
+                *field = *v;
+                if !changed.contains(index) {
+                    changed.push(*index);
+                }
+            }
+        }
+        for slot in changed {
+            let s = self.resource[&slot].clone();
+            self.resource_samples.push(ResourceSample {
+                tick,
+                entity_id: slot,
+                xp: s.xp,
+                score: s.score,
+                deaths: s.deaths,
+                ping: s.ping,
+            });
         }
     }
 
@@ -276,6 +437,12 @@ impl MessageHandler for EntityAnalyser {
             for prop in &table.props {
                 let identifier = SendPropIdentifier::new(table.name.as_str(), prop.name.as_str());
                 self.prop_names.insert(identifier, prop.name.to_string());
+                // SendPropArray3 elements are numeric props inside a table
+                // named after the array member (m_iPing.000, m_iPing.001, …).
+                if let Ok(index) = prop.name.as_str().parse::<u32>() {
+                    self.array_props
+                        .insert(identifier, (table.name.to_string(), index));
+                }
             }
         }
         self.class_names = server_classes
@@ -285,6 +452,16 @@ impl MessageHandler for EntityAnalyser {
         self.player_classes = server_classes
             .iter()
             .filter(|c| c.name.as_str().ends_with("Player"))
+            .map(|c| c.id.into())
+            .collect();
+        self.ghost_classes = server_classes
+            .iter()
+            .filter(|c| c.name.as_str().ends_with("WeaponGhost"))
+            .map(|c| c.id.into())
+            .collect();
+        self.resource_classes = server_classes
+            .iter()
+            .filter(|c| c.name.as_str().ends_with("PlayerResource"))
             .map(|c| c.id.into())
             .collect();
     }
@@ -305,6 +482,9 @@ impl MessageHandler for EntityAnalyser {
             .collect();
         EntityOutput {
             samples: self.samples,
+            ghost_samples: self.ghost_samples,
+            resource_samples: self.resource_samples,
+            damage_samples: self.damage_samples,
             player_classes: player_class_names,
             warning: None,
         }

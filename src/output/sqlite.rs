@@ -238,6 +238,42 @@ CREATE TABLE IF NOT EXISTS player_samples (
     in_pvs INTEGER NOT NULL       -- 0 = player just left the recorder's PVS
 );
 
+-- Ghost entity position (on-change). Reliable while the ghost is dropped;
+-- while carried, use the carrier's player_samples rows (weapon = 'ghost').
+CREATE TABLE IF NOT EXISTS ghost_samples (
+    id INTEGER PRIMARY KEY,
+    demo_id INTEGER NOT NULL REFERENCES demos(id),
+    tick INTEGER NOT NULL,
+    entity_id INTEGER NOT NULL,   -- the ghost entity, not a player
+    x REAL NOT NULL, y REAL NOT NULL, z REAL NOT NULL
+);
+
+-- Per-player scoreboard state from the player resource entity (on-change).
+CREATE TABLE IF NOT EXISTS player_resource (
+    id INTEGER PRIMARY KEY,
+    demo_id INTEGER NOT NULL REFERENCES demos(id),
+    tick INTEGER NOT NULL,
+    entity_id INTEGER NOT NULL,   -- player slot; joins players.entity_id
+    xp INTEGER NOT NULL,          -- NT;RE XP (the scoreboard rank number)
+    score INTEGER NOT NULL,
+    deaths INTEGER NOT NULL,
+    ping INTEGER NOT NULL
+);
+
+-- Hit log from the per-attacker damage accumulator
+-- (m_rfAttackersAccumlator). Each row = the attacker landed damage on the
+-- victim at this tick. accumulator is the fractional damage carry (< 1),
+-- not an amount; join the victim's health drop in player_samples at the
+-- same tick for the amount. SourceTV demos only.
+CREATE TABLE IF NOT EXISTS attacker_hits (
+    id INTEGER PRIMARY KEY,
+    demo_id INTEGER NOT NULL REFERENCES demos(id),
+    tick INTEGER NOT NULL,
+    victim_entity_id INTEGER NOT NULL,   -- joins players.entity_id
+    attacker_entity_id INTEGER NOT NULL, -- joins players.entity_id
+    accumulator REAL NOT NULL            -- fractional carry; 0 = respawn reset
+);
+
 CREATE INDEX IF NOT EXISTS idx_player_samples_demo_tick ON player_samples(demo_id, tick);
 CREATE INDEX IF NOT EXISTS idx_player_samples_demo_entity ON player_samples(demo_id, entity_id, tick);
 CREATE INDEX IF NOT EXISTS idx_game_events_demo_name ON game_events(demo_id, name);
@@ -542,6 +578,56 @@ impl Db {
                 demo_id, s.tick, s.entity_id, s.x, s.y, s.z, s.eye_pitch, s.eye_yaw,
                 s.vx, s.vy, s.vz, s.weapon, s.health, s.team, s.class_num, s.camo,
                 s.alive, s.in_pvs,
+            ])?;
+        }
+        Ok(())
+    }
+
+    pub fn insert_ghost_samples(
+        &self,
+        demo_id: i64,
+        samples: &[crate::extract::entities::GhostSample],
+    ) -> Result<()> {
+        let mut ins = self.conn.prepare(
+            "INSERT INTO ghost_samples (demo_id, tick, entity_id, x, y, z)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        )?;
+        for s in samples {
+            ins.execute(rusqlite::params![demo_id, s.tick, s.entity_id, s.x, s.y, s.z])?;
+        }
+        Ok(())
+    }
+
+    pub fn insert_player_resource(
+        &self,
+        demo_id: i64,
+        samples: &[crate::extract::entities::ResourceSample],
+    ) -> Result<()> {
+        let mut ins = self.conn.prepare(
+            "INSERT INTO player_resource (demo_id, tick, entity_id, xp, score, deaths, ping)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        )?;
+        for s in samples {
+            ins.execute(rusqlite::params![
+                demo_id, s.tick, s.entity_id, s.xp, s.score, s.deaths, s.ping,
+            ])?;
+        }
+        Ok(())
+    }
+
+    pub fn insert_attacker_hits(
+        &self,
+        demo_id: i64,
+        samples: &[crate::extract::entities::DamageSample],
+    ) -> Result<()> {
+        let mut ins = self.conn.prepare(
+            "INSERT INTO attacker_hits (demo_id, tick, victim_entity_id, attacker_entity_id,
+                                        accumulator)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+        )?;
+        for s in samples {
+            ins.execute(rusqlite::params![
+                demo_id, s.tick, s.victim_entity_id, s.attacker_entity_id, s.damage,
             ])?;
         }
         Ok(())

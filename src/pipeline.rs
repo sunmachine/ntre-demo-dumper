@@ -113,7 +113,13 @@ pub fn parse_one(path: &Path, db: &Db, opts: &Options) -> Result<()> {
     }
     if let Some(output) = &entity_output {
         db.insert_player_samples(demo_id, &output.samples)?;
+        db.insert_ghost_samples(demo_id, &output.ghost_samples)?;
+        db.insert_player_resource(demo_id, &output.resource_samples)?;
+        db.insert_attacker_hits(demo_id, &output.damage_samples)?;
         summary.push(("player samples".into(), output.samples.len()));
+        summary.push(("ghost samples".into(), output.ghost_samples.len()));
+        summary.push(("resource samples".into(), output.resource_samples.len()));
+        summary.push(("attacker hits".into(), output.damage_samples.len()));
         if output.player_classes.is_empty() {
             logs.push((
                 LogLevel::Warning,

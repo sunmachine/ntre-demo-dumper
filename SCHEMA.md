@@ -108,6 +108,45 @@ everyone at all times.
 | `alive` | 1 while alive (engine life state 0) |
 | `in_pvs` | 0 marks the player leaving the recorder's PVS; the row holds their last known state |
 
+### `ghost_samples`
+
+The ghost entity's own position over time (on-change). Reliable while the
+ghost is dropped or in the world; while a player carries it, track the
+carrier instead via `player_samples` rows with `weapon = 'ghost'`. The
+`entity_id` is the ghost entity, not a player. Columns: `tick`, `entity_id`,
+`x`, `y`, `z`.
+
+### `player_resource`
+
+Per-player scoreboard state from the player resource entity, on change.
+Slower-moving than `player_samples` and available for every player at all
+times, PVS included.
+
+| column | meaning |
+|---|---|
+| `tick` | sample time |
+| `entity_id` | player slot; joins `players.entity_id` |
+| `xp` | NT;RE XP, the number the scoreboard ranks by |
+| `score` | engine score field |
+| `deaths` | death count |
+| `ping` | latency in ms; 0 for bots |
+
+### `attacker_hits`
+
+Hit log from NT;RE's per-attacker damage accumulator
+(`m_rfAttackersAccumlator`), written on change: each row means the attacker
+landed damage on the victim at that tick. The accumulator value itself is
+only the fractional carry of damage (always below 1), so join the victim's
+health drop in `player_samples` at the same tick to get the amount.
+**SourceTV demos only**; POV demos never transmit this prop.
+
+| column | meaning |
+|---|---|
+| `tick` | when the hit landed |
+| `victim_entity_id` | joins `players.entity_id` |
+| `attacker_entity_id` | joins `players.entity_id` |
+| `accumulator` | fractional damage carry; a `0` row is the victim's respawn reset |
+
 ### `pov_samples`
 
 The recorder's own view, one row per packet frame (~66/s, unconditionally).
