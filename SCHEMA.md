@@ -23,8 +23,48 @@ so if you add a column, document it.
   counter-clockwise around `z`, `pitch` negative looking up / positive looking
   down, per engine convention.
 - **Booleans** are stored as SQLite `INTEGER` 0/1.
+- **Tags.** Tables that depend on the demo type carry a tag line:
+  - **POV only**: recorded only in first-person demos; empty for SourceTV
+    (HLTV) recordings.
+  - **SourceTV only**: the server sends this data only to SourceTV; empty
+    for POV recordings.
+  - **PVS-limited in POV**: entity-stream data; in POV demos it covers only
+    what the recorder's client was sent, while SourceTV demos cover
+    everything.
 
-## Tables
+  Untagged event-derived tables work in both demo types but can be empty
+  for demos recorded on NT;RE versions predating the event.
+
+## Table index
+
+Four groups: **reference** (who and what), **tick series** (state over
+time), **event log** (discrete happenings), and **derived** (heuristics over
+recovered text).
+
+| table | group | tags | player join |
+|---|---|---|---|
+| `demos` | reference | | `id` = every table's `demo_id` |
+| `players` | reference | | the join hub |
+| `player_samples` | tick series | PVS-limited in POV | `entity_id` |
+| `ghost_samples` | tick series | PVS-limited in POV | none (ghost entity) |
+| `player_resource` | tick series | | `entity_id` |
+| `pov_samples` | tick series | | none (the recorder) |
+| `recorder_inputs` | tick series | POV only | none (the recorder) |
+| `kills` | event log | | `userid` |
+| `attacker_hits` | event log | SourceTV only | `entity_id` |
+| `player_pings` | event log | | `userid` |
+| `ghost_callouts` | event log | | `userid` |
+| `team_scores` | event log | | none (per team) |
+| `team_changes` | event log | | `userid` |
+| `rank_changes` | event log | | `userid` |
+| `round_starts` | event log | | none |
+| `chat` | event log | | `entity_id` |
+| `console_cmds` | event log | POV only | none (the recorder) |
+| `game_events` | event log | | varies (JSON fields) |
+| `announcements` | derived | | none |
+| `rounds` | derived | | none |
+
+## Reference tables
 
 ### `demos`
 
@@ -57,41 +97,19 @@ the latest name.
 | `is_bot` | 1 for server bots |
 | `first_seen_tick` | when the player first appeared |
 
-### `kills`
+## Tick series
 
-Kill feed from NT;RE's own `player_death` game event definition.
-
-| column | meaning |
-|---|---|
-| `tick` | when the kill happened |
-| `victim_userid`, `attacker_userid` | join `players.userid`; attacker 0 = world/environment |
-| `victim_name`, `attacker_name` | resolved at parse time; NULL if unknown |
-| `assists` | assist count reported by the mod |
-| `weapon` | weapon string from the event, e.g. `weapon_srm` |
-| `headshot`, `suicide`, `explosive` | kill flags |
-| `ghoster` | 1 if the victim was carrying the ghost |
-
-### `rounds`
-
-Derived heuristically from start/win announcements. `round_starts` holds the
-wire-fact start events; this table adds winners and end ticks.
-
-| column | meaning |
-|---|---|
-| `round_number` | 1-based; NULL if the first start marker was missed |
-| `start_tick`, `end_tick` | NULL when the demo started mid-round or ended before the round did |
-| `winner` | e.g. `Jinrai`, `NSF`; NULL for an unfinished final round |
-| `win_reason` | text from the winning announcement |
+State over time. Rows are written on change unless noted, so carry values
+forward between rows when resampling.
 
 ### `player_samples`
+
+**Tags: PVS-limited in POV**
 
 All-player state over time, decoded from delta-compressed entity updates;
 this is the heatmap table. Rows are written **on change** (~66/s while a
 player is moving), so carry values forward between rows when resampling.
-
-**PVS caveat:** a POV demo only contains entities the recorder's client was
-sent, so players well out of sight produce no rows. SourceTV demos contain
-everyone at all times.
+In POV demos, players well out of the recorder's sight produce no rows.
 
 | column | meaning |
 |---|---|
@@ -109,6 +127,8 @@ everyone at all times.
 | `in_pvs` | 0 marks the player leaving the recorder's PVS; the row holds their last known state |
 
 ### `ghost_samples`
+
+**Tags: PVS-limited in POV**
 
 The ghost entity's own position over time (on-change). Reliable while the
 ghost is dropped or in the world; while a player carries it, track the
@@ -131,27 +151,12 @@ times, PVS included.
 | `deaths` | death count |
 | `ping` | latency in ms; 0 for bots |
 
-### `attacker_hits`
-
-Hit log from NT;RE's per-attacker damage accumulator
-(`m_rfAttackersAccumlator`), written on change: each row means the attacker
-landed damage on the victim at that tick. The accumulator value itself is
-only the fractional carry of damage (always below 1), so join the victim's
-health drop in `player_samples` at the same tick to get the amount.
-**SourceTV demos only**; POV demos never transmit this prop.
-
-| column | meaning |
-|---|---|
-| `tick` | when the hit landed |
-| `victim_entity_id` | joins `players.entity_id` |
-| `attacker_entity_id` | joins `players.entity_id` |
-| `accumulator` | fractional damage carry; a `0` row is the victim's respawn reset |
-
 ### `pov_samples`
 
 The recorder's own view, one row per packet frame (~66/s, unconditionally).
 Denser and simpler than `player_samples` for the recording player. Thin with
-`--pov-sample N`.
+`--pov-sample N`. In SourceTV demos these rows exist but are the
+auto-director camera, not a player.
 
 | column | meaning |
 |---|---|
@@ -160,6 +165,8 @@ Denser and simpler than `player_samples` for the recording player. Thin with
 | `pitch`, `yaw`, `roll` | view angles, degrees |
 
 ### `recorder_inputs`
+
+**Tags: POV only**
 
 The recorder's raw input per tick, from `dem_usercmd` frames. This table
 records what the recorder pressed; `pov_samples` records where they were.
@@ -182,6 +189,42 @@ fire, 11), `reload` (13), `sprint` (17), `zoom` (19), and NT;RE's `aim` (27),
 Aiming caveat: use `zoom` for "was the player aiming"; it is the held
 aim-down-sights state. `aim` is NT;RE's ADS-toggle keybind, set only on the
 tick the key is tapped, and stays 0 for players on the default `+zoom` bind.
+
+## Event log
+
+Discrete happenings, one row each, mostly decoded from the demo's own game
+event definitions.
+
+### `kills`
+
+Kill feed from NT;RE's own `player_death` game event definition.
+
+| column | meaning |
+|---|---|
+| `tick` | when the kill happened |
+| `victim_userid`, `attacker_userid` | join `players.userid`; attacker 0 = world/environment |
+| `victim_name`, `attacker_name` | resolved at parse time; NULL if unknown |
+| `assists` | assist count reported by the mod |
+| `weapon` | weapon string from the event, e.g. `weapon_srm` |
+| `headshot`, `suicide`, `explosive` | kill flags |
+| `ghoster` | 1 if the victim was carrying the ghost |
+
+### `attacker_hits`
+
+**Tags: SourceTV only**
+
+Hit log from NT;RE's per-attacker damage accumulator
+(`m_rfAttackersAccumlator`), written on change: each row means the attacker
+landed damage on the victim at that tick. The accumulator value itself is
+only the fractional carry of damage (always below 1), so join the victim's
+health drop in `player_samples` at the same tick to get the amount.
+
+| column | meaning |
+|---|---|
+| `tick` | when the hit landed |
+| `victim_entity_id` | joins `players.entity_id` |
+| `attacker_entity_id` | joins `players.entity_id` |
+| `accumulator` | fractional damage carry; a `0` row is the victim's respawn reset |
 
 ### `player_pings`
 
@@ -252,6 +295,13 @@ SayText2 user messages, control codes stripped.
 | `text` | the message |
 | `team_chat` | 1 for team-only chat |
 
+### `console_cmds`
+
+**Tags: POV only**
+
+Console commands issued by the recorder during the recording. Columns:
+`tick`, `cmd`.
+
 ### `game_events`
 
 Every game event in the demo, decoded generically against the demo's own
@@ -274,16 +324,27 @@ FROM game_events WHERE demo_id = 1 AND name = 'ghost_capture';
 SELECT DISTINCT name FROM game_events WHERE demo_id = 1;  -- what's in this demo?
 ```
 
+## Derived tables
+
+Heuristics over text recovered by the ASCII skim, not wire facts.
+
 ### `announcements`
 
 Center-screen text recovered by the ASCII skim (round starts, winners, ghost
 captures). `rounds` is derived from these. `seconds` is precomputed
 `tick / tickrate`. Columns: `tick`, `seconds`, `text`.
 
-### `console_cmds`
+### `rounds`
 
-Console commands issued by the recorder during the recording. Columns:
-`tick`, `cmd`.
+Derived heuristically from start/win announcements. `round_starts` holds the
+wire-fact start events; this table adds winners and end ticks.
+
+| column | meaning |
+|---|---|
+| `round_number` | 1-based; NULL if the first start marker was missed |
+| `start_tick`, `end_tick` | NULL when the demo started mid-round or ended before the round did |
+| `winner` | e.g. `Jinrai`, `NSF`; NULL for an unfinished final round |
+| `win_reason` | text from the winning announcement |
 
 ## Weapon reference
 

@@ -23,6 +23,8 @@ pub struct Db {
 }
 
 const SCHEMA: &str = r#"
+---------------------------------------------------------------- reference
+
 CREATE TABLE IF NOT EXISTS demos (
     id INTEGER PRIMARY KEY,        -- referenced by every table's demo_id
     path TEXT NOT NULL,
@@ -39,24 +41,61 @@ CREATE TABLE IF NOT EXISTS demos (
     tickrate REAL NOT NULL         -- seconds = tick / tickrate, in all tables
 );
 
--- Center-text / game announcements recovered from packet payloads.
-CREATE TABLE IF NOT EXISTS announcements (
+-- Player roster: from the string-table dump at recording start plus
+-- player_connect/player_info game events for late joiners.
+CREATE TABLE IF NOT EXISTS players (
+    id INTEGER PRIMARY KEY,
+    demo_id INTEGER NOT NULL REFERENCES demos(id),
+    entity_id INTEGER NOT NULL,    -- joins player_samples.entity_id, chat.client_entity
+    userid INTEGER NOT NULL,       -- joins kills.*_userid and game-event userid fields
+    name TEXT NOT NULL,            -- latest name if the player renamed
+    steamid TEXT NOT NULL,
+    is_bot INTEGER NOT NULL,
+    first_seen_tick INTEGER NOT NULL
+);
+
+--------------------------------------------------------------- tick series
+
+-- All-player entity samples (on-change): position, eye angles, weapon,
+-- health, team (2=Jinrai, 3=NSF), life state. POV demos only see entities
+-- in the recorder's PVS; in_pvs=0 marks a player leaving it.
+CREATE TABLE IF NOT EXISTS player_samples (
     id INTEGER PRIMARY KEY,
     demo_id INTEGER NOT NULL REFERENCES demos(id),
     tick INTEGER NOT NULL,
-    seconds REAL NOT NULL,
-    text TEXT NOT NULL
+    entity_id INTEGER NOT NULL,   -- joins players.entity_id
+    x REAL NOT NULL, y REAL NOT NULL, z REAL NOT NULL,  -- player origin (feet)
+    eye_pitch REAL NOT NULL, eye_yaw REAL NOT NULL,     -- degrees
+    vx REAL NOT NULL, vy REAL NOT NULL, vz REAL NOT NULL,  -- velocity, units/s
+    weapon TEXT NOT NULL,         -- active weapon class; '' until first seen
+    health INTEGER NOT NULL,
+    team INTEGER NOT NULL,        -- 0 none, 1 spectator, 2 Jinrai, 3 NSF
+    class INTEGER NOT NULL,       -- m_iNeoClass: 0 recon, 1 assault, 2 support, 3 VIP
+    camo INTEGER NOT NULL,        -- 1 while thermoptic camo is active
+    alive INTEGER NOT NULL,
+    in_pvs INTEGER NOT NULL       -- 0 = player just left the recorder's PVS
 );
 
--- Rounds derived from start/win announcements.
-CREATE TABLE IF NOT EXISTS rounds (
+-- Ghost entity position (on-change). Reliable while the ghost is dropped;
+-- while carried, use the carrier's player_samples rows (weapon = 'ghost').
+CREATE TABLE IF NOT EXISTS ghost_samples (
     id INTEGER PRIMARY KEY,
     demo_id INTEGER NOT NULL REFERENCES demos(id),
-    round_number INTEGER,
-    start_tick INTEGER,
-    end_tick INTEGER,
-    winner TEXT,
-    win_reason TEXT
+    tick INTEGER NOT NULL,
+    entity_id INTEGER NOT NULL,   -- the ghost entity, not a player
+    x REAL NOT NULL, y REAL NOT NULL, z REAL NOT NULL
+);
+
+-- Per-player scoreboard state from the player resource entity (on-change).
+CREATE TABLE IF NOT EXISTS player_resource (
+    id INTEGER PRIMARY KEY,
+    demo_id INTEGER NOT NULL REFERENCES demos(id),
+    tick INTEGER NOT NULL,
+    entity_id INTEGER NOT NULL,   -- player slot; joins players.entity_id
+    xp INTEGER NOT NULL,          -- NT;RE XP (the scoreboard rank number)
+    score INTEGER NOT NULL,
+    deaths INTEGER NOT NULL,
+    ping INTEGER NOT NULL
 );
 
 -- Recorder point-of-view, per packet frame: position and view angles.
@@ -96,26 +135,7 @@ CREATE TABLE IF NOT EXISTS recorder_inputs (
     vision     INTEGER GENERATED ALWAYS AS ((buttons >> 31) & 1) VIRTUAL
 );
 
--- Console commands issued by the recorder during playback.
-CREATE TABLE IF NOT EXISTS console_cmds (
-    id INTEGER PRIMARY KEY,
-    demo_id INTEGER NOT NULL REFERENCES demos(id),
-    tick INTEGER NOT NULL,
-    cmd TEXT NOT NULL
-);
-
--- Player roster: from the string-table dump at recording start plus
--- player_connect/player_info game events for late joiners.
-CREATE TABLE IF NOT EXISTS players (
-    id INTEGER PRIMARY KEY,
-    demo_id INTEGER NOT NULL REFERENCES demos(id),
-    entity_id INTEGER NOT NULL,    -- joins player_samples.entity_id, chat.client_entity
-    userid INTEGER NOT NULL,       -- joins kills.*_userid and game-event userid fields
-    name TEXT NOT NULL,            -- latest name if the player renamed
-    steamid TEXT NOT NULL,
-    is_bot INTEGER NOT NULL,
-    first_seen_tick INTEGER NOT NULL
-);
+---------------------------------------------------------------- event log
 
 -- Kill feed from the player_death game event (NT;RE definition).
 CREATE TABLE IF NOT EXISTS kills (
@@ -132,6 +152,20 @@ CREATE TABLE IF NOT EXISTS kills (
     suicide INTEGER NOT NULL,
     explosive INTEGER NOT NULL,
     ghoster INTEGER NOT NULL          -- victim was carrying the ghost
+);
+
+-- Hit log from the per-attacker damage accumulator
+-- (m_rfAttackersAccumlator). Each row = the attacker landed damage on the
+-- victim at this tick. accumulator is the fractional damage carry (< 1),
+-- not an amount; join the victim's health drop in player_samples at the
+-- same tick for the amount. SourceTV demos only.
+CREATE TABLE IF NOT EXISTS attacker_hits (
+    id INTEGER PRIMARY KEY,
+    demo_id INTEGER NOT NULL REFERENCES demos(id),
+    tick INTEGER NOT NULL,
+    victim_entity_id INTEGER NOT NULL,   -- joins players.entity_id
+    attacker_entity_id INTEGER NOT NULL, -- joins players.entity_id
+    accumulator REAL NOT NULL            -- fractional carry; 0 = respawn reset
 );
 
 -- In-game location pings (player_ping game events).
@@ -209,6 +243,14 @@ CREATE TABLE IF NOT EXISTS chat (
     team_chat INTEGER NOT NULL
 );
 
+-- Console commands issued by the recorder during playback.
+CREATE TABLE IF NOT EXISTS console_cmds (
+    id INTEGER PRIMARY KEY,
+    demo_id INTEGER NOT NULL REFERENCES demos(id),
+    tick INTEGER NOT NULL,
+    cmd TEXT NOT NULL
+);
+
 -- Every game event, fields as JSON (queryable via SQLite's json functions).
 CREATE TABLE IF NOT EXISTS game_events (
     id INTEGER PRIMARY KEY,
@@ -218,60 +260,26 @@ CREATE TABLE IF NOT EXISTS game_events (
     fields TEXT NOT NULL
 );
 
--- All-player entity samples (on-change): position, eye angles, weapon,
--- health, team (2=Jinrai, 3=NSF), life state. POV demos only see entities
--- in the recorder's PVS; in_pvs=0 marks a player leaving it.
-CREATE TABLE IF NOT EXISTS player_samples (
+------------------------------------------------------------------ derived
+
+-- Center-text / game announcements recovered from packet payloads.
+CREATE TABLE IF NOT EXISTS announcements (
     id INTEGER PRIMARY KEY,
     demo_id INTEGER NOT NULL REFERENCES demos(id),
     tick INTEGER NOT NULL,
-    entity_id INTEGER NOT NULL,   -- joins players.entity_id
-    x REAL NOT NULL, y REAL NOT NULL, z REAL NOT NULL,  -- player origin (feet)
-    eye_pitch REAL NOT NULL, eye_yaw REAL NOT NULL,     -- degrees
-    vx REAL NOT NULL, vy REAL NOT NULL, vz REAL NOT NULL,  -- velocity, units/s
-    weapon TEXT NOT NULL,         -- active weapon class; '' until first seen
-    health INTEGER NOT NULL,
-    team INTEGER NOT NULL,        -- 0 none, 1 spectator, 2 Jinrai, 3 NSF
-    class INTEGER NOT NULL,       -- m_iNeoClass: 0 recon, 1 assault, 2 support, 3 VIP
-    camo INTEGER NOT NULL,        -- 1 while thermoptic camo is active
-    alive INTEGER NOT NULL,
-    in_pvs INTEGER NOT NULL       -- 0 = player just left the recorder's PVS
+    seconds REAL NOT NULL,
+    text TEXT NOT NULL
 );
 
--- Ghost entity position (on-change). Reliable while the ghost is dropped;
--- while carried, use the carrier's player_samples rows (weapon = 'ghost').
-CREATE TABLE IF NOT EXISTS ghost_samples (
+-- Rounds derived from start/win announcements.
+CREATE TABLE IF NOT EXISTS rounds (
     id INTEGER PRIMARY KEY,
     demo_id INTEGER NOT NULL REFERENCES demos(id),
-    tick INTEGER NOT NULL,
-    entity_id INTEGER NOT NULL,   -- the ghost entity, not a player
-    x REAL NOT NULL, y REAL NOT NULL, z REAL NOT NULL
-);
-
--- Per-player scoreboard state from the player resource entity (on-change).
-CREATE TABLE IF NOT EXISTS player_resource (
-    id INTEGER PRIMARY KEY,
-    demo_id INTEGER NOT NULL REFERENCES demos(id),
-    tick INTEGER NOT NULL,
-    entity_id INTEGER NOT NULL,   -- player slot; joins players.entity_id
-    xp INTEGER NOT NULL,          -- NT;RE XP (the scoreboard rank number)
-    score INTEGER NOT NULL,
-    deaths INTEGER NOT NULL,
-    ping INTEGER NOT NULL
-);
-
--- Hit log from the per-attacker damage accumulator
--- (m_rfAttackersAccumlator). Each row = the attacker landed damage on the
--- victim at this tick. accumulator is the fractional damage carry (< 1),
--- not an amount; join the victim's health drop in player_samples at the
--- same tick for the amount. SourceTV demos only.
-CREATE TABLE IF NOT EXISTS attacker_hits (
-    id INTEGER PRIMARY KEY,
-    demo_id INTEGER NOT NULL REFERENCES demos(id),
-    tick INTEGER NOT NULL,
-    victim_entity_id INTEGER NOT NULL,   -- joins players.entity_id
-    attacker_entity_id INTEGER NOT NULL, -- joins players.entity_id
-    accumulator REAL NOT NULL            -- fractional carry; 0 = respawn reset
+    round_number INTEGER,
+    start_tick INTEGER,
+    end_tick INTEGER,
+    winner TEXT,
+    win_reason TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_player_samples_demo_tick ON player_samples(demo_id, tick);
