@@ -228,9 +228,12 @@ CREATE TABLE IF NOT EXISTS player_samples (
     entity_id INTEGER NOT NULL,   -- joins players.entity_id
     x REAL NOT NULL, y REAL NOT NULL, z REAL NOT NULL,  -- player origin (feet)
     eye_pitch REAL NOT NULL, eye_yaw REAL NOT NULL,     -- degrees
+    vx REAL NOT NULL, vy REAL NOT NULL, vz REAL NOT NULL,  -- velocity, units/s
     weapon TEXT NOT NULL,         -- active weapon class; '' until first seen
     health INTEGER NOT NULL,
     team INTEGER NOT NULL,        -- 0 none, 1 spectator, 2 Jinrai, 3 NSF
+    class INTEGER NOT NULL,       -- m_iNeoClass: 0 recon, 1 assault, 2 support, 3 VIP
+    camo INTEGER NOT NULL,        -- 1 while thermoptic camo is active
     alive INTEGER NOT NULL,
     in_pvs INTEGER NOT NULL       -- 0 = player just left the recorder's PVS
 );
@@ -529,13 +532,16 @@ impl Db {
     ) -> Result<()> {
         let mut ins = self.conn.prepare(
             "INSERT INTO player_samples (demo_id, tick, entity_id, x, y, z, eye_pitch, eye_yaw,
-                                         weapon, health, team, alive, in_pvs)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                                         vx, vy, vz, weapon, health, team, class, camo,
+                                         alive, in_pvs)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
+                     ?17, ?18)",
         )?;
         for s in samples {
             ins.execute(rusqlite::params![
                 demo_id, s.tick, s.entity_id, s.x, s.y, s.z, s.eye_pitch, s.eye_yaw,
-                s.weapon, s.health, s.team, s.alive, s.in_pvs,
+                s.vx, s.vy, s.vz, s.weapon, s.health, s.team, s.class_num, s.camo,
+                s.alive, s.in_pvs,
             ])?;
         }
         Ok(())

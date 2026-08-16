@@ -99,9 +99,12 @@ everyone at all times.
 | `entity_id` | joins `players.entity_id` |
 | `x`, `y`, `z` | world position (player origin, at the feet) |
 | `eye_pitch`, `eye_yaw` | aim direction, degrees |
+| `vx`, `vy`, `vz` | velocity, world units/s |
 | `weapon` | active weapon class, prefix-stripped (empty until a weapon is seen) |
 | `health` | current HP; NT;RE class maxima are 100 Recon/VIP, 120 Assault, 225 Support (`neo_player_shared.h`). Negative while dead = overkill damage; spectator entities sit at 1 |
 | `team` | 0 unassigned, 1 spectator, 2 Jinrai, 3 NSF |
+| `class` | NT;RE class: 0 recon, 1 assault, 2 support, 3 VIP |
+| `camo` | 1 while thermoptic camo is active |
 | `alive` | 1 while alive (engine life state 0) |
 | `in_pvs` | 0 marks the player leaving the recorder's PVS; the row holds their last known state |
 

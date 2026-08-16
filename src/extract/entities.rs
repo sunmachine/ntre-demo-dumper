@@ -31,9 +31,14 @@ pub struct PlayerSample {
     pub z: f32,
     pub eye_pitch: f32,
     pub eye_yaw: f32,
+    pub vx: f32,
+    pub vy: f32,
+    pub vz: f32,
     pub weapon: String,
     pub health: i64,
     pub team: i64,
+    pub class_num: i64,
+    pub camo: bool,
     pub alive: bool,
     pub in_pvs: bool,
 }
@@ -72,9 +77,14 @@ struct PlayerState {
     z: f32,
     eye_pitch: f32,
     eye_yaw: f32,
+    vx: f32,
+    vy: f32,
+    vz: f32,
     weapon_entity: u32,
     health: i64,
     team: i64,
+    class_num: i64,
+    camo: bool,
     life_state: i64,
 }
 
@@ -157,6 +167,18 @@ impl EntityAnalyser {
                     player.z = *z;
                     changed = true;
                 }
+                ("m_vecVelocity[0]", SendPropValue::Float(vx)) => {
+                    player.vx = *vx;
+                    changed = true;
+                }
+                ("m_vecVelocity[1]", SendPropValue::Float(vy)) => {
+                    player.vy = *vy;
+                    changed = true;
+                }
+                ("m_vecVelocity[2]", SendPropValue::Float(vz)) => {
+                    player.vz = *vz;
+                    changed = true;
+                }
                 ("m_angEyeAngles[0]", SendPropValue::Float(pitch)) => {
                     player.eye_pitch = *pitch;
                     changed = true;
@@ -178,6 +200,14 @@ impl EntityAnalyser {
                 }
                 ("m_iTeamNum", SendPropValue::Integer(team)) => {
                     player.team = *team;
+                    changed = true;
+                }
+                ("m_iNeoClass", SendPropValue::Integer(class_num)) => {
+                    player.class_num = *class_num;
+                    changed = true;
+                }
+                ("m_bInThermOpticCamo", SendPropValue::Integer(camo)) => {
+                    player.camo = *camo != 0;
                     changed = true;
                 }
                 ("m_lifeState", SendPropValue::Integer(life)) => {
@@ -212,9 +242,14 @@ impl EntityAnalyser {
             z: p.z,
             eye_pitch: p.eye_pitch,
             eye_yaw: p.eye_yaw,
+            vx: p.vx,
+            vy: p.vy,
+            vz: p.vz,
             weapon,
             health: p.health,
             team: p.team,
+            class_num: p.class_num,
+            camo: p.camo,
             alive: p.life_state == 0,
             in_pvs,
         });
