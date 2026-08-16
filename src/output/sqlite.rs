@@ -2,7 +2,12 @@
 //!
 //! One database can hold many demos; every child row is tagged with the
 //! `demos.id` returned by `insert_demo`. When adding a table for a new
-//! extractor, add it to `SCHEMA` and give it an `insert_*` method here.
+//! extractor, add it to `SCHEMA`, give it an `insert_*` method here, and
+//! document it in SCHEMA.md (a test enforces the last part).
+//!
+//! Comments inside a CREATE TABLE statement are preserved by SQLite and shown
+//! by `.schema`, so they double as end-user documentation — comments between
+//! statements do not.
 
 use anyhow::Result;
 use rusqlite::Connection;
@@ -19,19 +24,19 @@ pub struct Db {
 
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS demos (
-    id INTEGER PRIMARY KEY,
+    id INTEGER PRIMARY KEY,        -- referenced by every table's demo_id
     path TEXT NOT NULL,
     parsed_at TEXT NOT NULL DEFAULT (datetime('now')),
     demo_protocol INTEGER NOT NULL,
     network_protocol INTEGER NOT NULL,
     server TEXT NOT NULL,
-    client TEXT NOT NULL,
+    client TEXT NOT NULL,          -- name of the recording player
     map TEXT NOT NULL,
     game_directory TEXT NOT NULL,
     playback_seconds REAL NOT NULL,
     playback_ticks INTEGER NOT NULL,
     playback_frames INTEGER NOT NULL,
-    tickrate REAL NOT NULL
+    tickrate REAL NOT NULL         -- seconds = tick / tickrate, in all tables
 );
 
 -- Center-text / game announcements recovered from packet payloads.
@@ -102,9 +107,9 @@ CREATE TABLE IF NOT EXISTS console_cmds (
 CREATE TABLE IF NOT EXISTS players (
     id INTEGER PRIMARY KEY,
     demo_id INTEGER NOT NULL REFERENCES demos(id),
-    entity_id INTEGER NOT NULL,
-    userid INTEGER NOT NULL,
-    name TEXT NOT NULL,
+    entity_id INTEGER NOT NULL,    -- joins player_samples.entity_id, chat.client_entity
+    userid INTEGER NOT NULL,       -- joins kills.*_userid and game-event userid fields
+    name TEXT NOT NULL,            -- latest name if the player renamed
     steamid TEXT NOT NULL,
     is_bot INTEGER NOT NULL,
     first_seen_tick INTEGER NOT NULL
@@ -115,16 +120,16 @@ CREATE TABLE IF NOT EXISTS kills (
     id INTEGER PRIMARY KEY,
     demo_id INTEGER NOT NULL REFERENCES demos(id),
     tick INTEGER NOT NULL,
-    victim_userid INTEGER NOT NULL,
-    victim_name TEXT,
-    attacker_userid INTEGER NOT NULL,
+    victim_userid INTEGER NOT NULL,   -- joins players.userid
+    victim_name TEXT,                 -- resolved at parse time; NULL if unknown
+    attacker_userid INTEGER NOT NULL, -- 0 = world / environment
     attacker_name TEXT,
     assists INTEGER NOT NULL,
     weapon TEXT NOT NULL,
     headshot INTEGER NOT NULL,
     suicide INTEGER NOT NULL,
     explosive INTEGER NOT NULL,
-    ghoster INTEGER NOT NULL
+    ghoster INTEGER NOT NULL          -- victim was carrying the ghost
 );
 
 -- Chat lines (SayText2 user messages).
@@ -154,14 +159,14 @@ CREATE TABLE IF NOT EXISTS player_samples (
     id INTEGER PRIMARY KEY,
     demo_id INTEGER NOT NULL REFERENCES demos(id),
     tick INTEGER NOT NULL,
-    entity_id INTEGER NOT NULL,
-    x REAL NOT NULL, y REAL NOT NULL, z REAL NOT NULL,
-    eye_pitch REAL NOT NULL, eye_yaw REAL NOT NULL,
-    weapon TEXT NOT NULL,
+    entity_id INTEGER NOT NULL,   -- joins players.entity_id
+    x REAL NOT NULL, y REAL NOT NULL, z REAL NOT NULL,  -- player origin (feet)
+    eye_pitch REAL NOT NULL, eye_yaw REAL NOT NULL,     -- degrees
+    weapon TEXT NOT NULL,         -- active weapon class; '' until first seen
     health INTEGER NOT NULL,
-    team INTEGER NOT NULL,
+    team INTEGER NOT NULL,        -- 0 none, 1 spectator, 2 Jinrai, 3 NSF
     alive INTEGER NOT NULL,
-    in_pvs INTEGER NOT NULL
+    in_pvs INTEGER NOT NULL       -- 0 = player just left the recorder's PVS
 );
 
 CREATE INDEX IF NOT EXISTS idx_player_samples_demo_tick ON player_samples(demo_id, tick);
@@ -378,5 +383,50 @@ impl Db {
             ins.execute(rusqlite::params![demo_id, tick, cmd])?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SCHEMA;
+    use rusqlite::Connection;
+
+    /// SCHEMA.md must mention (in backticks) every table and every column,
+    /// generated columns included — so schema changes can't silently outrun
+    /// the documentation.
+    #[test]
+    fn schema_md_documents_every_table_and_column() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(SCHEMA).unwrap();
+        let doc = include_str!("../../SCHEMA.md");
+
+        let tables: Vec<String> = conn
+            .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert!(!tables.is_empty());
+
+        for table in &tables {
+            assert!(
+                doc.contains(&format!("`{table}`")),
+                "SCHEMA.md does not document table `{table}`"
+            );
+            let columns: Vec<String> = conn
+                .prepare(&format!("SELECT name FROM pragma_table_xinfo('{table}')"))
+                .unwrap()
+                .query_map([], |row| row.get(0))
+                .unwrap()
+                .collect::<rusqlite::Result<_>>()
+                .unwrap();
+            for column in &columns {
+                assert!(
+                    doc.contains(&format!("`{column}`")),
+                    "SCHEMA.md does not document column `{column}` of table `{table}`"
+                );
+            }
+        }
     }
 }

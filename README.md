@@ -86,7 +86,9 @@ ntre-demo-dumper --all-strings my.dem        # exploratory: keep every recovered
 ```
 
 Tables: `demos`, `announcements`, `rounds`, `pov_samples`, `recorder_inputs`,
-`console_cmds`, `players`, `kills`, `chat`, `game_events`, `player_samples`.
+`console_cmds`, `players`, `kills`, `chat`, `game_events`, `player_samples` —
+see [SCHEMA.md](SCHEMA.md) for column semantics, join keys, and example
+queries. `.schema` in the sqlite3 shell also shows the commented DDL.
 
 ## License
 
