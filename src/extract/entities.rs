@@ -109,19 +109,34 @@ fn weapon_name(class_name: &str) -> String {
 
 impl EntityAnalyser {
     fn apply_entity(&mut self, tick: u32, entity: &PacketEntity, state: &ParserState) {
-        let class_id: u16 = entity.server_class.into();
         let entity_id: u32 = entity.entity_index.into();
-        self.entity_classes.entry(entity_id).or_insert(class_id);
+
+        use tf_demo_parser::demo::message::packetentities::UpdateType;
+        // Entity slots are reused; track the *current* class per slot. On
+        // Delete, resolve the class from our map (the message's own class
+        // field is not meaningful for deletes) and forget the slot.
+        let class_id: u16 = if entity.update_type == UpdateType::Delete {
+            match self.entity_classes.remove(&entity_id) {
+                Some(id) => id,
+                None => return,
+            }
+        } else {
+            let id: u16 = entity.server_class.into();
+            self.entity_classes.insert(entity_id, id);
+            id
+        };
 
         if !self.player_classes.contains(&class_id) {
             return;
         }
 
-        use tf_demo_parser::demo::message::packetentities::UpdateType;
         if entity.update_type == UpdateType::Leave || entity.update_type == UpdateType::Delete {
             if let Some(p) = self.players.get(&entity_id) {
                 let p = p.clone();
                 self.push_sample(tick, entity_id, &p, false);
+            }
+            if entity.update_type == UpdateType::Delete {
+                self.players.remove(&entity_id);
             }
             return;
         }

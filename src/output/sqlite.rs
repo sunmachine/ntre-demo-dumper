@@ -87,7 +87,9 @@ CREATE TABLE IF NOT EXISTS recorder_inputs (
     attack2    INTEGER GENERATED ALWAYS AS ((buttons >> 11) & 1) VIRTUAL,
     reload     INTEGER GENERATED ALWAYS AS ((buttons >> 13) & 1) VIRTUAL,
     sprint     INTEGER GENERATED ALWAYS AS ((buttons >> 17) & 1) VIRTUAL,
-    aim        INTEGER GENERATED ALWAYS AS ((buttons >> 27) & 1) VIRTUAL,
+    zoom       INTEGER GENERATED ALWAYS AS ((buttons >> 19) & 1) VIRTUAL, -- held ADS
+    aim        INTEGER GENERATED ALWAYS AS ((buttons >> 27) & 1) VIRTUAL, -- ADS-toggle keypress
+
     lean_left  INTEGER GENERATED ALWAYS AS ((buttons >> 28) & 1) VIRTUAL,
     lean_right INTEGER GENERATED ALWAYS AS ((buttons >> 29) & 1) VIRTUAL,
     thermoptic INTEGER GENERATED ALWAYS AS ((buttons >> 30) & 1) VIRTUAL,

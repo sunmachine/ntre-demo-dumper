@@ -783,8 +783,6 @@ dependencies = [
 [[package]]
 name = "tf-demo-parser"
 version = "0.6.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4bdb0489206a229feeb7e72d161ae8c117116de0eddbca70ce9c50a41f082d07"
 dependencies = [
  "bitbuffer",
  "enumflags2",

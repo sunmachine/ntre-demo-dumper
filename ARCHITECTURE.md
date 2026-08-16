@@ -78,7 +78,12 @@ the generic `game_events` table from these messages.
 
 `extract/entities.rs` decodes svc_PacketEntities through tf-demo-parser's
 sendtable machinery — a whole-file pass separate from the frame loop, since
-the library owns its own demo walk. Its analyser subscribes to
+the library owns its own demo walk. The crate is vendored at
+`vendor/tf-demo-parser/` (via `[patch.crates-io]`) with one behavioral
+change: upstream rejects sendtable array elements carrying the ChangesOften
+flag, but the engine permits that combination and NT;RE uses it
+(`DT_NEO_Player.m_rfAttackersAccumlator`), so the check is relaxed to only
+reject genuinely malformed double element props. Its analyser subscribes to
 `MessageType::PacketEntities` only, so the library length-skips game events
 and never runs its unsafe typed-event reader. Player classes are found
 dynamically (server class names ending in "Player"), props are matched by

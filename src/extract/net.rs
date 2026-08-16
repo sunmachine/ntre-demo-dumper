@@ -125,7 +125,13 @@ fn int_field(fields: &[(String, EventValue)], name: &str) -> u32 {
 }
 
 fn bool_field(fields: &[(String, EventValue)], name: &str) -> bool {
-    matches!(field(fields, name), Some(EventValue::Bool(true)))
+    // Events encode flags as Bool or as Short/Byte (e.g. player_connect_client's
+    // `bot` is a short) depending on the definition; accept both.
+    match field(fields, name) {
+        Some(EventValue::Bool(b)) => *b,
+        Some(EventValue::Int(n)) => *n != 0,
+        _ => false,
+    }
 }
 
 fn str_field(fields: &[(String, EventValue)], name: &str) -> String {
@@ -149,7 +155,9 @@ impl NetPass {
                 explosive: bool_field(fields, "explosive"),
                 ghoster: bool_field(fields, "ghoster"),
             }),
-            "player_connect" | "player_info" => {
+            // player_connect_client is what NT;RE actually fires for joins
+            // (bots included) observed mid-recording.
+            "player_connect" | "player_connect_client" | "player_info" => {
                 let user_id = int_field(fields, "userid");
                 self.players.entry(user_id).or_insert_with(|| Player {
                     entity_id: int_field(fields, "index") + 1,

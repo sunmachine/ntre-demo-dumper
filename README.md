@@ -92,4 +92,7 @@ queries. `.schema` in the sqlite3 shell also shows the commented DDL.
 
 ## License
 
-MIT; see [LICENSE.md](LICENSE.md).
+MIT; see [LICENSE.md](LICENSE.md). The vendored
+[tf-demo-parser](vendor/tf-demo-parser) is used under the MIT option of its
+`MIT OR Apache-2.0` license; see its
+[LICENSE.md](vendor/tf-demo-parser/LICENSE.md).

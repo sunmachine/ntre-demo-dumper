@@ -99,7 +99,7 @@ everyone at all times.
 | `x`, `y`, `z` | world position (player origin, at the feet) |
 | `eye_pitch`, `eye_yaw` | aim direction, degrees |
 | `weapon` | active weapon class, prefix-stripped (empty until a weapon is seen) |
-| `health` | current HP |
+| `health` | current HP; NT;RE class maxima are 100 Recon/VIP, 120 Assault, 225 Support (`neo_player_shared.h`). Negative while dead = overkill damage; spectator entities sit at 1 |
 | `team` | 0 unassigned, 1 spectator, 2 Jinrai, 3 NSF |
 | `alive` | 1 while alive (engine life state 0) |
 | `in_pvs` | 0 marks the player leaving the recorder's PVS — last known state, position stale after it |
@@ -133,8 +133,14 @@ The recorder's raw input per tick from `dem_usercmd` frames — what they
 
 Generated convenience columns decode `buttons` (query them like real
 columns): `attack` (fired, bit 0), `jump` (1), `duck` (2), `attack2` (alt
-fire, 11), `reload` (13), `sprint` (17), and NT;RE's `aim` (aim-down-sights,
-27), `lean_left` (28), `lean_right` (29), `thermoptic` (30), `vision` (31).
+fire, 11), `reload` (13), `sprint` (17), `zoom` (19), and NT;RE's `aim` (27),
+`lean_left` (28), `lean_right` (29), `thermoptic` (30), `vision` (31).
+
+Aiming caveat: **`zoom` is the held aim-down-sights state** — use it for "was
+the player aiming". `aim` is NT;RE's ADS-*toggle* keybind, set only on the
+tick the key is tapped (and 0 throughout for players who bind ADS to `+zoom`,
+the default). The toggled-on aim state itself is player state, not a button,
+so it never appears in usercmds.
 
 ### `chat`
 
