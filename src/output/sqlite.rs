@@ -271,6 +271,21 @@ CREATE TABLE IF NOT EXISTS game_events (
 
 ------------------------------------------------------------------ derived
 
+-- Inferred hit attribution: one row per health drop, with the attacker
+-- guessed from enemy aim at that tick (fatal hits come from the kill event).
+-- Rows are recomputed on every parse and may change as the rule improves.
+CREATE TABLE IF NOT EXISTS inferred_hits (
+    id INTEGER PRIMARY KEY,
+    demo_id INTEGER NOT NULL REFERENCES demos(id),
+    tick INTEGER NOT NULL,
+    victim_entity_id INTEGER NOT NULL,   -- joins players.entity_id
+    attacker_entity_id INTEGER,          -- joins players.entity_id; NULL = unattributed
+    damage INTEGER NOT NULL,             -- victim's health drop at this tick
+    aim_error REAL,                      -- degrees between attacker's aim and the victim
+    confidence REAL NOT NULL,            -- 0 to 1
+    method TEXT NOT NULL                 -- rule that produced the row
+);
+
 -- Center-text / game announcements recovered from packet payloads.
 CREATE TABLE IF NOT EXISTS announcements (
     id INTEGER PRIMARY KEY,
@@ -642,6 +657,31 @@ impl Db {
         for s in samples {
             ins.execute(rusqlite::params![
                 demo_id, s.tick, s.entity_id, s.xp, s.score, s.deaths, s.ping,
+            ])?;
+        }
+        Ok(())
+    }
+
+    pub fn insert_inferred_hits(
+        &self,
+        demo_id: i64,
+        hits: &[crate::extract::inferred_hits::InferredHit],
+    ) -> Result<()> {
+        let mut ins = self.conn.prepare(
+            "INSERT INTO inferred_hits (demo_id, tick, victim_entity_id, attacker_entity_id, damage,
+                                        aim_error, confidence, method)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        )?;
+        for h in hits {
+            ins.execute(rusqlite::params![
+                demo_id,
+                h.tick,
+                h.victim_entity_id,
+                h.attacker_entity_id,
+                h.damage,
+                h.aim_error,
+                h.confidence,
+                h.method,
             ])?;
         }
         Ok(())
