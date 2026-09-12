@@ -145,6 +145,34 @@ fn fields_to_json(fields: &[(String, EventValue)]) -> String {
 
 /// Strip Source chat control codes: \x01-\x06 mode markers, \x07 + RRGGBB,
 /// \x08 + RRGGBBAA.
+/// SayText2: client entity u8, chat flag u8, a format string, then up to
+/// four parameter strings. A format string is either a localization token
+/// (`#HL2MP_Chat_All`) or, in NT;RE, a literal template such as
+/// `%s1: %s2`, `[Jinrai] %s1: %s2` (team chat), or `*DEAD* %s1: %s2`; in
+/// both cases `%s1` is the sender's name and `%s2` the message. Anything
+/// else is a bare server line with no sender.
+fn parse_say_text2(tick: i32, data: &crate::demo::bits::BitChunk) -> Result<ChatLine> {
+    let mut r = data.reader();
+    let client = r.read_bits(8)?;
+    let _chat = r.read_bits(8)?;
+    let format = r.read_string()?;
+    let is_template = format.starts_with('#') || format.contains("Chat") || format.contains("%s1");
+    if is_template {
+        let from = r.read_string()?;
+        let text = r.read_string()?;
+        let team_chat = format.contains("Team") || format.contains('[');
+        Ok(ChatLine { tick, client_entity: client, from, text, team_chat })
+    } else {
+        Ok(ChatLine {
+            tick,
+            client_entity: client,
+            from: String::new(),
+            text: format,
+            team_chat: false,
+        })
+    }
+}
+
 fn strip_chat_codes(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut chars = text.chars();
@@ -286,29 +314,7 @@ impl NetPass {
         if kind != SAY_TEXT2 {
             return;
         }
-        // SayText2: client entity u8, raw-text flag u8, then either a bare
-        // string or (kind string, from string, message string).
-        let parse = || -> Result<ChatLine> {
-            let mut r2 = data.reader();
-            let client = r2.read_bits(8)?;
-            let _raw = r2.read_bits(8)?;
-            let first = r2.read_string()?;
-            if first.starts_with('#') || first.contains("Chat") {
-                let from = r2.read_string()?;
-                let text = r2.read_string()?;
-                let team_chat = first.contains("Team");
-                Ok(ChatLine { tick, client_entity: client, from, text, team_chat })
-            } else {
-                Ok(ChatLine {
-                    tick,
-                    client_entity: client,
-                    from: String::new(),
-                    text: first,
-                    team_chat: false,
-                })
-            }
-        };
-        if let Ok(mut line) = parse() {
+        if let Ok(mut line) = parse_say_text2(tick, data) {
             line.text = strip_chat_codes(&line.text).trim().to_string();
             line.from = strip_chat_codes(&line.from).trim().to_string();
             if !line.text.is_empty() {
@@ -403,5 +409,53 @@ impl FrameExtractor for NetPass {
             summary.push(("net decode warnings".into(), self.warnings));
         }
         Ok(summary)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::demo::bits::testutil::BitWriter;
+    use crate::demo::bits::BitChunk;
+
+    fn say_text2(format: &str, params: &[&str]) -> BitChunk {
+        let mut w = BitWriter::default();
+        w.write_bits(9, 8); // client entity
+        w.write_bits(1, 8); // chat flag
+        w.write_string(format);
+        for p in params {
+            w.write_string(p);
+        }
+        let bit_len = w.bytes.len() * 8;
+        BitChunk { bytes: w.bytes, bit_len }
+    }
+
+    #[test]
+    fn ntre_literal_template_yields_sender_and_message() {
+        let chunk = say_text2("%s1: %s2", &["Scylitha", "gl hf", "", ""]);
+        let line = parse_say_text2(5, &chunk).unwrap();
+        assert_eq!(line.client_entity, 9);
+        assert_eq!(line.from, "Scylitha");
+        assert_eq!(line.text, "gl hf");
+        assert!(!line.team_chat);
+    }
+
+    #[test]
+    fn team_and_dead_prefixes() {
+        let line = parse_say_text2(1, &say_text2("[Jinrai] %s1: %s2", &["a", "rush", "", ""])).unwrap();
+        assert!(line.team_chat);
+        let line = parse_say_text2(1, &say_text2("*DEAD* %s1: %s2", &["a", "gg", "", ""])).unwrap();
+        assert!(!line.team_chat);
+        assert_eq!(line.text, "gg");
+    }
+
+    #[test]
+    fn localization_token_and_bare_line() {
+        let line = parse_say_text2(1, &say_text2("#HL2MP_Chat_Team", &["a", "b"])).unwrap();
+        assert!(line.team_chat);
+        assert_eq!((line.from.as_str(), line.text.as_str()), ("a", "b"));
+        let line = parse_say_text2(1, &say_text2("Server restarting", &[])).unwrap();
+        assert_eq!(line.text, "Server restarting");
+        assert!(line.from.is_empty());
     }
 }
