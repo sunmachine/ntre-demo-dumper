@@ -168,6 +168,9 @@ pub mod testutil {
             self.write_bits(0, 8);
         }
 
+        /// Only some fixtures need a float field; keep the mirror of
+        /// `read_f32` available whether or not a test uses it today.
+        #[allow(dead_code)]
         pub fn write_f32(&mut self, f: f32) {
             self.write_bits(f.to_bits(), 32);
         }
