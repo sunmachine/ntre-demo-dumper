@@ -83,7 +83,9 @@ because the library owns its own demo walk. The crate is vendored at
 change: upstream rejects sendtable array elements carrying the ChangesOften
 flag, but the engine permits that combination and NT;RE uses it
 (`DT_NEO_Player.m_rfAttackersAccumlator`), so the check is relaxed to only
-reject genuinely malformed double element props. Its analyser subscribes to
+reject genuinely malformed double element props. NT;RE builds from
+2026-07-25 onward no longer network that array, but the patch stays for
+demos recorded on earlier builds. Its analyser subscribes to
 `MessageType::PacketEntities` only, so the library length-skips game events
 and never runs its unsafe typed-event reader. Player classes are found
 dynamically (server class names ending in "Player"), props are matched by

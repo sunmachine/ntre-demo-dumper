@@ -51,7 +51,7 @@ recovered text).
 | `pov_samples` | tick series | | none (the recorder) |
 | `recorder_inputs` | tick series | POV only | none (the recorder) |
 | `kills` | event log | | `userid` |
-| `attacker_hits` | event log | SourceTV only | `entity_id` |
+| `attacker_hits` | event log | SourceTV only, pre-July-2026 builds | `entity_id` |
 | `player_pings` | event log | | `userid` |
 | `ghost_callouts` | event log | | `userid` |
 | `team_scores` | event log | | none (per team) |
@@ -211,13 +211,19 @@ Kill feed from NT;RE's own `player_death` game event definition.
 
 ### `attacker_hits`
 
-**Tags: SourceTV only**
+**Tags: SourceTV only, pre-July-2026 builds**
 
 Hit log from NT;RE's per-attacker damage accumulator
 (`m_rfAttackersAccumlator`), written on change: each row means the attacker
 landed damage on the victim at that tick. The accumulator value itself is
 only the fractional carry of damage (always below 1), so join the victim's
 health drop in `player_samples` at the same tick to get the amount.
+
+Empty for demos recorded on NT;RE builds from 2026-07-25 onward. Upstream
+commit `cf2f30e0` ("Damage reporting fixup") stopped networking the
+accumulator arrays; the server now sends per-death damage totals to the
+dying player alone, via the `KillerDamageInfo` user message, which SourceTV
+never receives. Demos from earlier builds still populate this table.
 
 | column | meaning |
 |---|---|
