@@ -81,6 +81,17 @@ pub struct RoundStart {
     pub fraglimit: i64,
 }
 
+/// One round end as announced by NT;RE's RoundResult user message.
+#[derive(Clone)]
+pub struct RoundResult {
+    pub tick: i32,
+    /// `jinrai`, `nsf`, or `tie`, as sent.
+    pub team: String,
+    /// The victory text shown on screen, e.g. "Team NSF wins by capturing
+    /// the ghost!" or "TIE"; empty when the server sent none.
+    pub message: String,
+}
+
 pub struct Player {
     pub entity_id: u32,
     pub user_id: u32,
@@ -101,12 +112,15 @@ pub struct NetPass {
     pub team_changes: Vec<TeamChange>,
     pub rank_changes: Vec<RankChange>,
     pub round_starts: Vec<RoundStart>,
+    pub round_results: Vec<RoundResult>,
     pub chat: Vec<ChatLine>,
     pub players: HashMap<u32, Player>, // by userid
     warnings: usize,
 }
 
-const SAY_TEXT2: u8 = 4; // NT;RE user message ids (hl2_usermessages.cpp)
+// NT;RE user message ids (hl2_usermessages.cpp; RoundResult is NEO-specific).
+const SAY_TEXT2: u8 = 4;
+const ROUND_RESULT: u8 = 28;
 
 fn json_escape(s: &str, out: &mut String) {
     out.push('"');
@@ -171,6 +185,17 @@ fn parse_say_text2(tick: i32, data: &crate::demo::bits::BitChunk) -> Result<Chat
             team_chat: false,
         })
     }
+}
+
+/// RoundResult (NT;RE, `CNEORules::SetWinningTeam`): winning team string
+/// (`jinrai`, `nsf`, `tie`), the server time as f32, then the victory
+/// message. The message is omitted for map-scripted wins.
+fn parse_round_result(tick: i32, data: &crate::demo::bits::BitChunk) -> Result<RoundResult> {
+    let mut r = data.reader();
+    let team = r.read_string()?;
+    let _server_time = r.read_f32()?;
+    let message = if r.bits_left() >= 8 { r.read_string()? } else { String::new() };
+    Ok(RoundResult { tick, team, message: message.trim().to_string() })
 }
 
 fn strip_chat_codes(text: &str) -> String {
@@ -311,6 +336,13 @@ impl NetPass {
     }
 
     fn on_user_message(&mut self, tick: i32, kind: u8, data: &crate::demo::bits::BitChunk) {
+        if kind == ROUND_RESULT {
+            match parse_round_result(tick, data) {
+                Ok(result) => self.round_results.push(result),
+                Err(_) => self.warnings += 1,
+            }
+            return;
+        }
         if kind != SAY_TEXT2 {
             return;
         }
@@ -394,6 +426,7 @@ impl FrameExtractor for NetPass {
         db.insert_team_changes(demo_id, &self.team_changes)?;
         db.insert_rank_changes(demo_id, &self.rank_changes)?;
         db.insert_round_starts(demo_id, &self.round_starts)?;
+        db.insert_round_results(demo_id, &self.round_results)?;
         db.insert_chat(demo_id, &self.chat)?;
         db.insert_game_events(demo_id, &self.events)?;
         let mut summary: Summary = vec![
@@ -405,6 +438,7 @@ impl FrameExtractor for NetPass {
             ("team changes".into(), self.team_changes.len()),
             ("rank changes".into(), self.rank_changes.len()),
             ("round starts".into(), self.round_starts.len()),
+            ("round results".into(), self.round_results.len()),
             ("chat lines".into(), self.chat.len()),
             ("game events".into(), self.events.len()),
         ];
@@ -421,6 +455,11 @@ mod tests {
     use crate::demo::bits::testutil::BitWriter;
     use crate::demo::bits::BitChunk;
 
+    fn chunk(w: BitWriter) -> BitChunk {
+        let bit_len = w.bytes.len() * 8;
+        BitChunk { bytes: w.bytes, bit_len }
+    }
+
     fn say_text2(format: &str, params: &[&str]) -> BitChunk {
         let mut w = BitWriter::default();
         w.write_bits(9, 8); // client entity
@@ -429,8 +468,7 @@ mod tests {
         for p in params {
             w.write_string(p);
         }
-        let bit_len = w.bytes.len() * 8;
-        BitChunk { bytes: w.bytes, bit_len }
+        chunk(w)
     }
 
     #[test]
@@ -460,5 +498,21 @@ mod tests {
         let line = parse_say_text2(1, &say_text2("Server restarting", &[])).unwrap();
         assert_eq!(line.text, "Server restarting");
         assert!(line.from.is_empty());
+    }
+
+    #[test]
+    fn round_result_reads_team_time_and_message() {
+        let mut w = BitWriter::default();
+        w.write_string("tie");
+        w.write_f32(1822.26);
+        w.write_string("TIE\n");
+        let r = parse_round_result(7, &chunk(w)).unwrap();
+        assert_eq!((r.tick, r.team.as_str(), r.message.as_str()), (7, "tie", "TIE"));
+
+        let mut w = BitWriter::default();
+        w.write_string("nsf");
+        w.write_f32(1.0);
+        let r = parse_round_result(8, &chunk(w)).unwrap();
+        assert_eq!((r.team.as_str(), r.message.as_str()), ("nsf", ""));
     }
 }

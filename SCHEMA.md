@@ -58,6 +58,7 @@ recovered text).
 | `team_changes` | event log | | `userid` |
 | `rank_changes` | event log | | `userid` |
 | `round_starts` | event log | | none |
+| `round_results` | event log | | none |
 | `chat` | event log | | `entity_id` |
 | `console_cmds` | event log | POV only | none (the recorder) |
 | `game_events` | event log | | varies (JSON fields) |
@@ -286,8 +287,23 @@ increasing with XP).
 
 Round starts as wire facts, from `round_start` game events. Unlike `rounds`,
 these carry no winner. Columns: `tick`, `objective`, `timelimit`,
-`fraglimit`. Caveat: observed demos report `objective` as `DEATHMATCH` even
-in capture-the-ghost games, so treat it with suspicion.
+`fraglimit`. Caveat: NT;RE hardcodes `objective` to `DEATHMATCH` on every
+round start, whatever the game mode, so ignore it.
+
+### `round_results`
+
+Round ends as wire facts, from NT;RE's `RoundResult` user message, which
+the server sends to every client (SourceTV included) when a round ends.
+Stalemates are announced here and nowhere else on screen, so this is the
+only complete record of round outcomes.
+
+| column | meaning |
+|---|---|
+| `tick` | when the round ended |
+| `team` | `jinrai`, `nsf`, or `tie`, as sent |
+| `message` | the victory text, e.g. `Team NSF wins by capturing the ghost!` or `TIE`; empty for map-scripted wins |
+
+A round aborted by an admin pause and restarted sends no result.
 
 ### `chat`
 
@@ -337,20 +353,23 @@ Heuristics over text recovered by the ASCII skim, not wire facts.
 ### `announcements`
 
 Center-screen text recovered by the ASCII skim (round starts, winners, ghost
-captures). `rounds` is derived from these. `seconds` is precomputed
+captures). `rounds` takes its start markers from these. `seconds` is precomputed
 `tick / tickrate`. Columns: `tick`, `seconds`, `text`.
 
 ### `rounds`
 
-Derived heuristically from start/win announcements. `round_starts` holds the
-wire-fact start events; this table adds winners and end ticks.
+One row per round: the `ROUND N STARTED` announcement supplies the number
+and start tick, and `round_results` supplies the end tick and outcome. A
+demo without `RoundResult` messages falls back to `Team X wins ...`
+announcements for its ends, which cannot see ties. `round_starts` holds
+the wire-fact start events.
 
 | column | meaning |
 |---|---|
-| `round_number` | 1-based; NULL if the first start marker was missed |
-| `start_tick`, `end_tick` | NULL when the demo started mid-round or ended before the round did |
-| `winner` | e.g. `Jinrai`, `NSF`; NULL for an unfinished final round |
-| `win_reason` | text from the winning announcement |
+| `round_number` | as announced by the game; NULL if the first start marker was missed. A round restarted after an admin pause repeats its number |
+| `start_tick`, `end_tick` | NULL when the demo started mid-round, or the round never ended (cut off, or aborted by a pause) |
+| `winner` | `Jinrai`, `NSF`, or `Tie`; NULL for a round that never ended |
+| `win_reason` | e.g. `by capturing the ghost`, `by eliminating the other team`, `the match`, `tie` |
 
 ## Weapon reference
 

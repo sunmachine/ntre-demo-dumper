@@ -65,17 +65,15 @@ pub fn parse_one(path: &Path, db: &Db, opts: &Options) -> Result<()> {
 
     let ctx = DemoContext { data: &data, header: &header, threads: opts.threads };
 
-    // Register extractors here (see extract/mod.rs for the recipe).
-    let mut extractors: Vec<Box<dyn FrameExtractor>> = vec![
-        Box::new(announcements::Announcements::new(
-            opts.patterns.clone(),
-            opts.all_strings,
-        )),
-        Box::new(pov::PovSampler::new(opts.pov_sample)),
-        Box::new(console::ConsoleCmds::default()),
-        Box::new(inputs::RecorderInputs::default()),
-        Box::new(net::NetPass::default()),
-    ];
+    // Register extractors here (see extract/mod.rs for the recipe). The
+    // announcements and net passes are named because rounds need both.
+    let mut announcements = announcements::Announcements::new(opts.patterns.clone(), opts.all_strings);
+    let mut net = net::NetPass::default();
+    let mut pov = pov::PovSampler::new(opts.pov_sample);
+    let mut console = console::ConsoleCmds::default();
+    let mut inputs = inputs::RecorderInputs::default();
+    let mut extractors: Vec<&mut dyn FrameExtractor> =
+        vec![&mut announcements, &mut pov, &mut console, &mut inputs, &mut net];
 
     let mut logs: Vec<(LogLevel, String)> = Vec::new();
 
@@ -104,6 +102,11 @@ pub fn parse_one(path: &Path, db: &Db, opts: &Options) -> Result<()> {
             None
         }
     };
+
+    drop(extractors);
+    announcements.set_round_results(net.round_results.clone());
+    let mut extractors: Vec<&mut dyn FrameExtractor> =
+        vec![&mut announcements, &mut pov, &mut console, &mut inputs, &mut net];
 
     db.begin()?;
     let demo_id = db.insert_demo(&path.display().to_string(), &header)?;

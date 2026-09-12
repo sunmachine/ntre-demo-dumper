@@ -27,7 +27,8 @@ The crate/binary is named `ntre-demo-dumper`.
   same engine branch as TF2).
 - **Announcements:** round starts, round winners, ghost captures, with tick and
   wall-clock timestamps.
-- **Rounds:** derived start/end tick, winner, and win reason per round.
+- **Rounds:** start/end tick, winner (including ties), and win reason per
+  round, from the game's own round-end message.
 - **Recorder POV:** position and view angles every packet frame (~66/s), ready
   for heatmaps of the recording player.
 - **Recorder inputs:** per-tick buttons (fire, jump, duck, reload, sprint, and
