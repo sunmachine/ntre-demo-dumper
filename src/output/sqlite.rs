@@ -146,7 +146,7 @@ CREATE TABLE IF NOT EXISTS kills (
     victim_name TEXT,                 -- resolved at parse time; NULL if unknown
     attacker_userid INTEGER NOT NULL, -- 0 = world / environment
     attacker_name TEXT,
-    assists INTEGER NOT NULL,
+    assists INTEGER NOT NULL,        -- assisting player's userid, 0 = none
     weapon TEXT NOT NULL,
     headshot INTEGER NOT NULL,
     suicide INTEGER NOT NULL,

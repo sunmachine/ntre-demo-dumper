@@ -204,7 +204,7 @@ Kill feed from NT;RE's own `player_death` game event definition.
 | `tick` | when the kill happened |
 | `victim_userid`, `attacker_userid` | join `players.userid`; attacker 0 = world/environment |
 | `victim_name`, `attacker_name` | resolved at parse time; NULL if unknown |
-| `assists` | assist count reported by the mod |
+| `assists` | userid of the assisting player, or 0 for none; joins `players.userid` (NT;RE defines the event field as "user ID who assists") |
 | `weapon` | weapon string from the event, e.g. `weapon_srm` |
 | `headshot`, `suicide`, `explosive` | kill flags |
 | `ghoster` | 1 if the victim was carrying the ghost |
