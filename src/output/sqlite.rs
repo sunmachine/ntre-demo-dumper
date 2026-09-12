@@ -158,7 +158,8 @@ CREATE TABLE IF NOT EXISTS kills (
 -- (m_rfAttackersAccumlator). Each row = the attacker landed damage on the
 -- victim at this tick. accumulator is the fractional damage carry (< 1),
 -- not an amount; join the victim's health drop in player_samples at the
--- same tick for the amount. SourceTV demos only.
+-- same tick for the amount. SourceTV demos only, and only from NT;RE builds
+-- before 2026-07-25: later builds no longer network the accumulator.
 CREATE TABLE IF NOT EXISTS attacker_hits (
     id INTEGER PRIMARY KEY,
     demo_id INTEGER NOT NULL REFERENCES demos(id),
