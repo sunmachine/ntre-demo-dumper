@@ -37,9 +37,12 @@ so if you add a column, document it.
 
 ## Table index
 
-Four groups: **reference** (who and what), **tick series** (state over
-time), **event log** (discrete happenings), and **derived** (heuristics over
-recovered text).
+Five groups: **reference** (who and what), **tick series** (state over
+time), **event log** (discrete happenings), **derived** (deterministic
+reconstructions from recovered text), and **inferred** (probabilistic
+guesses). Inferred tables are named `inferred_*` and every row carries a
+`confidence` from 0 to 1 and a `method` naming the rule that produced it;
+rows are recomputed on every parse and may change when a rule improves.
 
 | table | group | tags | player join |
 |---|---|---|---|
@@ -64,6 +67,7 @@ recovered text).
 | `game_events` | event log | | varies (JSON fields) |
 | `announcements` | derived | | none |
 | `rounds` | derived | | none |
+| `inferred_hits` | inferred | | `entity_id` |
 
 ## Reference tables
 
@@ -370,6 +374,37 @@ the wire-fact start events.
 | `start_tick`, `end_tick` | NULL when the demo started mid-round, or the round never ended (cut off, or aborted by a pause) |
 | `winner` | `Jinrai`, `NSF`, or `Tie`; NULL for a round that never ended |
 | `win_reason` | e.g. `by capturing the ghost`, `by eliminating the other team`, `the match`, `tie` |
+
+## Inferred tables
+
+Probabilistic reconstructions. Query with the `confidence` column in mind,
+and filter on `method` if a rule changes underneath you.
+
+### `inferred_hits`
+
+Who dealt each point of damage. NT;RE builds from 2026-07-25 onward no
+longer network the accumulator behind `attacker_hits`, so this table
+rebuilds attribution from what every demo still carries: one row per health
+drop in `player_samples`, with the attacker taken from the kill event for
+the fatal hit and, for every other hit, the living enemy whose aim points
+closest at the victim on that tick.
+
+| column | meaning |
+|---|---|
+| `tick` | when the victim's health dropped |
+| `victim_entity_id` | joins `players.entity_id` |
+| `attacker_entity_id` | joins `players.entity_id`; NULL when no enemy's aim was within 15 degrees |
+| `damage` | the health drop, so overkill on the fatal hit |
+| `aim_error` | degrees between the attacker's view direction and the victim; NULL for kill-event rows |
+| `confidence` | 1 for kill-event rows; otherwise falls from 1 at zero aim error to 0 at 20 degrees |
+| `method` | `kill-event`, `aim-v1`, or `none` |
+
+Measured against the March 2026 demos, where the accumulator gives ground
+truth, the `aim-v1` rule names the right attacker on 92% of hits. Grenade
+and fall damage produce rows too; they are usually unattributed or low
+confidence, because no one's aim explains them. Health drops whose damage
+is a whole number leave no accumulator trace, so this table also holds
+hits that `attacker_hits` never listed.
 
 ## Weapon reference
 

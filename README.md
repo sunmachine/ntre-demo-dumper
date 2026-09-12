@@ -36,6 +36,9 @@ The crate/binary is named `ntre-demo-dumper`.
   switches, decoded from `dem_usercmd` frames. Convenience boolean columns are
   generated from the raw buttons field.
 - **Console commands** issued by the recorder.
+- **Inferred hits:** who dealt each point of damage, reconstructed from
+  health drops and enemy aim with a confidence per row, for demos where the
+  game no longer networks damage attribution.
 - **Kill feed:** NT;RE's `player_death` game event: victim, attacker, assists,
   weapon, headshot/suicide/explosive/ghoster flags, with names resolved via the
   roster.
