@@ -10,6 +10,7 @@ use regex::Regex;
 use std::ops::Range;
 use std::thread;
 
+use super::net::RoundResult;
 use super::{rounds, skim, DemoContext, FrameExtractor, Summary};
 use crate::demo::frames::{Frame, FrameKind};
 use crate::output::sqlite::Db;
@@ -46,11 +47,18 @@ pub struct Announcements {
     patterns: Vec<Regex>,
     all_strings: bool,
     packets: Vec<(i32, Range<usize>)>,
+    round_results: Vec<RoundResult>,
 }
 
 impl Announcements {
     pub fn new(patterns: Vec<Regex>, all_strings: bool) -> Self {
-        Self { patterns, all_strings, packets: Vec::new() }
+        Self { patterns, all_strings, packets: Vec::new(), round_results: Vec::new() }
+    }
+
+    /// Hand over the round ends decoded by the net pass; `rounds` prefers
+    /// them over win announcements because they also cover ties.
+    pub fn set_round_results(&mut self, results: Vec<RoundResult>) {
+        self.round_results = results;
     }
 
     /// Skim the collected packets across `ctx.threads` workers; results are
@@ -103,7 +111,7 @@ impl FrameExtractor for Announcements {
 
     fn persist(&mut self, db: &Db, demo_id: i64, ctx: &DemoContext) -> Result<Summary> {
         let announcements = self.skim_all(ctx);
-        let rounds = rounds::derive(&announcements);
+        let rounds = rounds::derive(&announcements, &self.round_results);
         db.insert_announcements(demo_id, &announcements, ctx.header.tickrate())?;
         db.insert_rounds(demo_id, &rounds)?;
         Ok(vec![

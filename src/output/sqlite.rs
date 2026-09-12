@@ -222,8 +222,7 @@ CREATE TABLE IF NOT EXISTS rank_changes (
     new_rank INTEGER NOT NULL
 );
 
--- Round starts as wire facts (round_start game events); the rounds table
--- is derived from announcements instead.
+-- Round starts as wire facts (round_start game events).
 CREATE TABLE IF NOT EXISTS round_starts (
     id INTEGER PRIMARY KEY,
     demo_id INTEGER NOT NULL REFERENCES demos(id),
@@ -231,6 +230,15 @@ CREATE TABLE IF NOT EXISTS round_starts (
     objective TEXT NOT NULL,     -- unreliable: DEATHMATCH even in CTG games
     timelimit INTEGER NOT NULL,
     fraglimit INTEGER NOT NULL
+);
+
+-- Round ends as wire facts (NT;RE RoundResult user messages).
+CREATE TABLE IF NOT EXISTS round_results (
+    id INTEGER PRIMARY KEY,
+    demo_id INTEGER NOT NULL REFERENCES demos(id),
+    tick INTEGER NOT NULL,
+    team TEXT NOT NULL,          -- jinrai, nsf, or tie
+    message TEXT NOT NULL        -- victory text; empty for map-scripted wins
 );
 
 -- Chat lines (SayText2 user messages).
@@ -272,7 +280,8 @@ CREATE TABLE IF NOT EXISTS announcements (
     text TEXT NOT NULL
 );
 
--- Rounds derived from start/win announcements.
+-- Rounds derived from start announcements and round_results (or win
+-- announcements when a demo has no RoundResult messages).
 CREATE TABLE IF NOT EXISTS rounds (
     id INTEGER PRIMARY KEY,
     demo_id INTEGER NOT NULL REFERENCES demos(id),
@@ -528,6 +537,20 @@ impl Db {
         )?;
         for c in changes {
             ins.execute(rusqlite::params![demo_id, c.tick, c.userid, c.old_rank, c.new_rank])?;
+        }
+        Ok(())
+    }
+
+    pub fn insert_round_results(
+        &self,
+        demo_id: i64,
+        results: &[crate::extract::net::RoundResult],
+    ) -> Result<()> {
+        let mut ins = self.conn.prepare(
+            "INSERT INTO round_results (demo_id, tick, team, message) VALUES (?1, ?2, ?3, ?4)",
+        )?;
+        for r in results {
+            ins.execute(rusqlite::params![demo_id, r.tick, r.team, r.message])?;
         }
         Ok(())
     }
