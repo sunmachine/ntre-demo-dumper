@@ -351,6 +351,9 @@ impl FrameExtractor for NetPass {
                 }
             }
             FrameKind::StringTables => {
+                // The signon-stage frames carry the server's uptime tick,
+                // not a recording-relative one, so a roster player is
+                // "first seen" at tick 0: the start of the recording.
                 if let Ok(players) = parse_userinfo(frame.payload_in(ctx.data)) {
                     for p in players {
                         if p.is_hltv {
@@ -362,7 +365,7 @@ impl FrameExtractor for NetPass {
                             name: p.name,
                             steam_id: p.steam_id,
                             is_bot: p.is_fake_player,
-                            first_seen_tick: frame.tick,
+                            first_seen_tick: 0,
                         });
                     }
                 }

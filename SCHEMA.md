@@ -95,7 +95,7 @@ the latest name.
 | `name` | player name (latest, if they renamed) |
 | `steamid` | e.g. `[U:1:12345678]`, or `BOT` |
 | `is_bot` | 1 for server bots |
-| `first_seen_tick` | when the player first appeared |
+| `first_seen_tick` | when the player first appeared: 0 for players present when the recording began, the `player_connect` tick for late joiners |
 
 ## Tick series
 

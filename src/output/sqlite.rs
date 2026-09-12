@@ -51,7 +51,7 @@ CREATE TABLE IF NOT EXISTS players (
     name TEXT NOT NULL,            -- latest name if the player renamed
     steamid TEXT NOT NULL,
     is_bot INTEGER NOT NULL,
-    first_seen_tick INTEGER NOT NULL
+    first_seen_tick INTEGER NOT NULL -- 0 = present when recording began
 );
 
 --------------------------------------------------------------- tick series
