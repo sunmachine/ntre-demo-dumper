@@ -109,6 +109,9 @@ pings, chat, game events, and per-tick samples. See [SCHEMA.md](SCHEMA.md)
 for the table list, column semantics, join keys, and example queries;
 `.schema` in the sqlite3 shell shows the commented DDL.
 
+After upgrading the dumper, parse into a new database file: it refuses to
+add demos to one written by an older version.
+
 ## License
 
 MIT; see [LICENSE.md](LICENSE.md). The vendored
