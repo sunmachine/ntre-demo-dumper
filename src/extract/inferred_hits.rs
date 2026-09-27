@@ -49,15 +49,17 @@ struct State {
     z: f32,
     pitch: f32,
     yaw: f32,
-    weapon: String,
+    weapon: Option<String>,
     health: i64,
     team: i64,
     alive: bool,
 }
 
 /// Weapons that cannot land a hitscan or melee hit by aiming at the victim.
-fn cannot_hit(weapon: &str) -> bool {
-    matches!(weapon, "" | "ghost" | "smokegrenade" | "grenade" | "detpack" | "proxmine" | "remotedet")
+/// NULL (no weapon seen, or a non-weapon active class) is excluded the same
+/// way the old empty string was.
+fn cannot_hit(weapon: Option<&str>) -> bool {
+    matches!(weapon, None | Some("ghost" | "smokegrenade" | "grenade" | "proxmine" | "remotedet"))
 }
 
 /// Angle in degrees between the attacker's view and the vector to the target.
@@ -142,7 +144,7 @@ fn aim_hit(s: &PlayerSample, damage: i64, victim: &State, state: &HashMap<u32, S
     let best = state
         .iter()
         .filter(|(&id, a)| id != s.entity_id && a.alive && a.team != victim.team && (a.team == 2 || a.team == 3))
-        .filter(|(_, a)| !cannot_hit(&a.weapon))
+        .filter(|(_, a)| !cannot_hit(a.weapon.as_deref()))
         .map(|(&id, a)| (id, aim_error(a, victim)))
         .min_by(|a, b| a.1.total_cmp(&b.1));
     match best {
@@ -172,7 +174,7 @@ mod tests {
     use super::*;
 
     fn state(x: f32, y: f32, pitch: f32, yaw: f32) -> State {
-        State { x, y, z: 0.0, pitch, yaw, weapon: "mx".into(), health: 100, team: 2, alive: true }
+        State { x, y, z: 0.0, pitch, yaw, weapon: Some("mx".into()), health: 100, team: 2, alive: true }
     }
 
     #[test]
@@ -198,7 +200,7 @@ mod tests {
             vx: 0.0,
             vy: 0.0,
             vz: 0.0,
-            weapon: "mx".into(),
+            weapon: Some("mx".into()),
             health,
             team,
             class_num: 1,

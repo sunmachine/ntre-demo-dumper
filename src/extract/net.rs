@@ -253,6 +253,20 @@ fn str_field(fields: &[(String, EventValue)], name: &str) -> String {
     }
 }
 
+/// For a grenade or detpack kill, the event reports the inflictor rather
+/// than the holder's weapon (upstream `neo_gamerules.cpp:4341-4351`), so
+/// `weapon` arrives as the projectile's own entity name. Map it to the
+/// weapon that threw or placed it; any other value, such as a world damage
+/// cause, passes through as the event sent it.
+fn kill_weapon(weapon: String) -> String {
+    match weapon.as_str() {
+        "neo_grenade_frag" => "grenade".to_string(),
+        "neo_deployed_detpack" => "remotedet".to_string(),
+        "neo_grenade_smoke" => "smokegrenade".to_string(),
+        _ => weapon,
+    }
+}
+
 impl NetPass {
     fn on_game_event(&mut self, tick: i32, name: &str, fields: &[(String, EventValue)]) {
         match name {
@@ -261,7 +275,7 @@ impl NetPass {
                 victim_userid: id_field(fields, "userid"),
                 attacker_userid: id_field(fields, "attacker"),
                 assists: id_field(fields, "assists"),
-                weapon: str_field(fields, "weapon"),
+                weapon: kill_weapon(str_field(fields, "weapon")),
                 headshot: bool_field(fields, "headshot"),
                 suicide: bool_field(fields, "suicide"),
                 explosive: bool_field(fields, "explosive"),
