@@ -208,9 +208,9 @@ CREATE TABLE IF NOT EXISTS ghost_callouts (
     id INTEGER PRIMARY KEY,
     demo_id INTEGER NOT NULL REFERENCES demos(id),
     tick INTEGER NOT NULL,
-    userid INTEGER NOT NULL,        -- ghost carrier; joins players.userid
-    team INTEGER NOT NULL,          -- carrier's team
-    target_userid INTEGER NOT NULL, -- spotted enemy; joins players.userid
+    userid INTEGER NOT NULL,           -- ghost carrier; joins players.userid
+    team INTEGER NOT NULL,             -- carrier's team
+    target_entity_id INTEGER NOT NULL, -- spotted enemy; joins players.entity_id
     x INTEGER NOT NULL, y INTEGER NOT NULL, z INTEGER NOT NULL  -- spotted position
 );
 
@@ -594,12 +594,12 @@ impl Db {
         callouts: &[crate::extract::net::GhostCallout],
     ) -> Result<()> {
         let mut ins = self.conn.prepare(
-            "INSERT INTO ghost_callouts (demo_id, tick, userid, team, target_userid, x, y, z)
+            "INSERT INTO ghost_callouts (demo_id, tick, userid, team, target_entity_id, x, y, z)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         )?;
         for c in callouts {
             ins.execute(rusqlite::params![
-                demo_id, c.tick, c.userid, c.team, c.target_userid, c.x, c.y, c.z,
+                demo_id, c.tick, c.userid, c.team, c.target_entity_id, c.x, c.y, c.z,
             ])?;
         }
         Ok(())

@@ -65,7 +65,7 @@ rows are recomputed on every parse and may change when a rule improves.
 | `kills` | event log | | `userid` |
 | `attacker_hits` | event log | SourceTV only, pre-July-2026 builds | `entity_id` |
 | `player_pings` | event log | POV only | `userid` |
-| `ghost_callouts` | event log | POV only | `userid` |
+| `ghost_callouts` | event log | POV only | `userid`, `entity_id` |
 | `team_scores` | event log | POV only | none (per team) |
 | `team_changes` | event log | | `userid` |
 | `rank_changes` | event log | POV only | `userid` |
@@ -298,7 +298,7 @@ compass. Players never send callouts, so a game without bots has no rows.
 | `tick` | when the callout fired |
 | `userid` | ghost carrier; joins `players.userid` |
 | `team` | carrier's team, coded as in `player_samples.team` |
-| `target_userid` | spotted enemy; joins `players.userid` |
+| `target_entity_id` | spotted enemy; joins `players.entity_id` |
 | `x`, `y`, `z` | spotted enemy's world position |
 
 ### `team_scores`
