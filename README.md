@@ -108,12 +108,14 @@ ntre-demo-dumper --all-strings my.dem        # exploratory: keep every recovered
 A demo already in the database is skipped, even under another name.
 
 The tables cover metadata, announcements, rounds, scores, roster, kills,
-pings, chat, game events, and per-tick samples. See [SCHEMA.md](SCHEMA.md)
-for the table list, column semantics, join keys, and example queries;
-`.schema` in the sqlite3 shell shows the commented DDL.
+pings, chat, game events, and per-tick samples. Some fill only for SourceTV
+recordings or only for POV recordings. See [SCHEMA.md](SCHEMA.md) for the
+table list, which tables depend on the recording type, column semantics,
+join keys, and example queries; `.schema` in the sqlite3 shell shows the
+commented DDL.
 
 After upgrading the dumper, parse into a new database file: it refuses to
-add demos to one written by an older version.
+add demos to one written by another version.
 
 ## License
 

@@ -191,7 +191,7 @@ CREATE TABLE IF NOT EXISTS attacker_hits (
     accumulator REAL NOT NULL            -- fractional carry; 0 = respawn reset
 );
 
--- In-game location pings (player_ping game events).
+-- In-game location pings (player_ping game events). POV demos only.
 CREATE TABLE IF NOT EXISTS player_pings (
     id INTEGER PRIMARY KEY,
     demo_id INTEGER NOT NULL REFERENCES demos(id),
@@ -199,11 +199,11 @@ CREATE TABLE IF NOT EXISTS player_pings (
     userid INTEGER NOT NULL,      -- pinging player; joins players.userid
     team INTEGER NOT NULL,        -- pinging player's team
     x INTEGER NOT NULL, y INTEGER NOT NULL, z INTEGER NOT NULL,  -- pinged position
-    ghoster_ping INTEGER NOT NULL -- the event's ghosterping flag
+    ghoster_ping INTEGER NOT NULL -- 1 if the pinger carried the ghost or was the VIP
 );
 
--- Automatic enemy-position callouts while the ghost is held
--- (ghost_enemy_callout game events).
+-- Enemy positions called out by a bot carrying the ghost
+-- (ghost_enemy_callout game events). POV demos only.
 CREATE TABLE IF NOT EXISTS ghost_callouts (
     id INTEGER PRIMARY KEY,
     demo_id INTEGER NOT NULL REFERENCES demos(id),
@@ -214,7 +214,7 @@ CREATE TABLE IF NOT EXISTS ghost_callouts (
     x INTEGER NOT NULL, y INTEGER NOT NULL, z INTEGER NOT NULL  -- spotted position
 );
 
--- Cumulative team score updates (team_score game events).
+-- Cumulative team score updates (team_score game events). POV demos only.
 CREATE TABLE IF NOT EXISTS team_scores (
     id INTEGER PRIMARY KEY,
     demo_id INTEGER NOT NULL REFERENCES demos(id),
@@ -234,7 +234,7 @@ CREATE TABLE IF NOT EXISTS team_changes (
     disconnect INTEGER NOT NULL  -- 1 when the change is a disconnect
 );
 
--- Rank progression (player_rankchange game events).
+-- Rank progression (player_rankchange game events). POV demos only.
 CREATE TABLE IF NOT EXISTS rank_changes (
     id INTEGER PRIMARY KEY,
     demo_id INTEGER NOT NULL REFERENCES demos(id),

@@ -29,7 +29,8 @@ so if you add a column, document it.
   spectator, 2 Jinrai, 3 NSF. Round outcomes use `jinrai`, `nsf` or `tie`.
 - **Tags.** Tables that depend on the demo type carry a tag line:
   - **POV only**: recorded only in first-person demos; empty for SourceTV
-    (HLTV) recordings.
+    (HLTV) recordings. SourceTV relays only a short list of standard game
+    events, and NT;RE's own events are not on it.
   - **SourceTV only**: the server sends this data only to SourceTV; empty
     for POV recordings.
   - **PVS-limited in POV**: entity-stream data; in POV demos it covers only
@@ -63,11 +64,11 @@ rows are recomputed on every parse and may change when a rule improves.
 | `recorder_inputs` | tick series | POV only | none (the recorder) |
 | `kills` | event log | | `userid` |
 | `attacker_hits` | event log | SourceTV only, pre-July-2026 builds | `entity_id` |
-| `player_pings` | event log | | `userid` |
-| `ghost_callouts` | event log | | `userid` |
-| `team_scores` | event log | | none (per team) |
+| `player_pings` | event log | POV only | `userid` |
+| `ghost_callouts` | event log | POV only | `userid` |
+| `team_scores` | event log | POV only | none (per team) |
 | `team_changes` | event log | | `userid` |
-| `rank_changes` | event log | | `userid` |
+| `rank_changes` | event log | POV only | `userid` |
 | `round_starts` | event log | | none |
 | `round_results` | event log | | none |
 | `chat` | event log | | `entity_id` |
@@ -271,6 +272,8 @@ never receives. Demos from earlier builds still populate this table.
 
 ### `player_pings`
 
+**Tags: POV only**
+
 In-game location pings, from `player_ping` game events. All players' pings
 are present, not just the recorder's.
 
@@ -280,13 +283,15 @@ are present, not just the recorder's.
 | `userid` | pinging player; joins `players.userid` |
 | `team` | pinging player's team, coded as in `player_samples.team` |
 | `x`, `y`, `z` | pinged world position |
-| `ghoster_ping` | the event's `ghosterping` flag |
+| `ghoster_ping` | 1 when the pinging player carried the ghost or was the VIP |
 
 ### `ghost_callouts`
 
-Automatic enemy-position callouts generated while a player carries the
-ghost, from `ghost_enemy_callout` game events. A log of the enemy intel the
-carrier's team received.
+**Tags: POV only**
+
+Enemy positions called out by a bot carrying the ghost, from
+`ghost_enemy_callout` game events. The carrier's team sees them on the
+compass. Players never send callouts, so a game without bots has no rows.
 
 | column | meaning |
 |---|---|
@@ -297,6 +302,8 @@ carrier's team received.
 | `x`, `y`, `z` | spotted enemy's world position |
 
 ### `team_scores`
+
+**Tags: POV only**
 
 Cumulative team score updates, from `team_score` game events. One row per
 update; the latest row at or before a tick is the score at that tick.
@@ -314,6 +321,8 @@ Team joins and switches, from `player_team` game events.
 | `disconnect` | 1 when the change is a player disconnecting |
 
 ### `rank_changes`
+
+**Tags: POV only**
 
 Rank progression, from `player_rankchange` game events. Columns: `tick`,
 `userid` (joins `players.userid`), `old_rank`, `new_rank` (rank index,
