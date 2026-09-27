@@ -13,8 +13,8 @@ use regex::Regex;
 use std::collections::HashMap;
 
 use super::announcements::Announcement;
-use super::entities::{CarrierChange, EntityOutput, ZoneChange};
-use super::net::{Player, RoundResult};
+use super::entities::{CarrierChange, EntityOutput, PlayerSample, ZoneChange};
+use super::net::{Kill, Player, RoundResult};
 
 pub struct Round {
     pub number: Option<i32>,
@@ -51,54 +51,79 @@ pub struct Evidence<'a> {
     pub zone_changes: &'a [ZoneChange],
     /// The roster by userid, for turning an entity slot into a userid.
     pub players: &'a HashMap<u32, Player>,
+    /// All-player state samples, for a losing team's alive state and a
+    /// killed player's class at a round's end.
+    pub player_samples: &'a [PlayerSample],
+    /// The kill feed, for a kill landing near a round's end.
+    pub kills: &'a [Kill],
 }
 
 impl<'a> Evidence<'a> {
     /// Collect the evidence from the entity pass, which is `None` when that
-    /// pass failed, and the roster.
-    pub fn new(entities: Option<&'a EntityOutput>, players: &'a HashMap<u32, Player>) -> Self {
+    /// pass failed, and the net pass's roster and kill feed.
+    pub fn new(
+        entities: Option<&'a EntityOutput>,
+        players: &'a HashMap<u32, Player>,
+        kills: &'a [Kill],
+    ) -> Self {
         Evidence {
             carrier_changes: entities.map(|e| &e.carrier_changes[..]).unwrap_or_default(),
             zone_changes: entities.map(|e| &e.zone_changes[..]).unwrap_or_default(),
             players,
+            player_samples: entities.map(|e| &e.samples[..]).unwrap_or_default(),
+            kills,
         }
     }
 }
 
 /// Ticks either side of a round end within which the capture zones must
-/// switch off. The game switches them off in the think that ends the round,
-/// so the window only absorbs a change landing in a neighbouring packet.
-const CAPTURE_WINDOW: i64 = 2;
+/// switch off, a VIP's death must fall, or a kill must fall, for that fact
+/// to count toward the round's outcome. The game applies all three in the
+/// think that ends the round, so the window only absorbs a change landing
+/// in a neighbouring packet.
+const END_WINDOW: i64 = 2;
 
-/// The userid of the ghost capturer for a round ending at `end_tick`, or
-/// None when the round was not won by a capture.
-///
-/// On a capture the game switches every capture zone off in the think that
-/// announces the win (upstream `neo_gamerules.cpp:1526-1547`), so a capture
-/// is a round end where every zone that was active before the window
-/// switched off within it. A VIP escort switches the zones off too
-/// (`:1643-1656`), but it runs only while no ghost exists, so the carrier
-/// is 0 and the rule gives None. The carrier is the one at the end tick, or
-/// the one on the tick before when it was cleared at the end tick.
-fn capturer(end_tick: i32, evidence: &Evidence) -> Option<u32> {
+/// Whether a tick falls within `END_WINDOW` of `end_tick`.
+fn near_end(tick: i32, end_tick: i32) -> bool {
+    (i64::from(tick) - i64::from(end_tick)).abs() <= END_WINDOW
+}
+
+/// Whether every capture zone active before the window around `end_tick`
+/// switched off within it. A ghost capture and a VIP escort both clear
+/// every zone this way when they end a round (upstream
+/// `neo_gamerules.cpp:1526-1547`, `:1643-1656`).
+fn zones_switched_off(end_tick: i32, evidence: &Evidence) -> bool {
     let end = i64::from(end_tick);
     // Each zone's state before the window opens and after it closes.
     let mut zones: HashMap<u32, (bool, bool)> = HashMap::new();
     for z in evidence.zone_changes {
         let tick = i64::from(z.tick);
         let (before, after) = zones.entry(z.entity_id).or_default();
-        if tick < end - CAPTURE_WINDOW {
+        if tick < end - END_WINDOW {
             *before = z.active;
         }
-        if tick <= end + CAPTURE_WINDOW {
+        if tick <= end + END_WINDOW {
             *after = z.active;
         }
     }
     let was_active: Vec<bool> =
         zones.values().filter(|(before, _)| *before).map(|(_, after)| *after).collect();
-    if was_active.is_empty() || was_active.contains(&true) {
+    !was_active.is_empty() && !was_active.contains(&true)
+}
+
+/// The userid of the ghost capturer for a round ending at `end_tick`, or
+/// None when the round was not won by a capture.
+///
+/// A capture is a round end where the zone test above passes. A VIP escort
+/// passes it too, but that rule runs only while no ghost exists, so the
+/// carrier is 0 and this function gives None. The carrier is the one at the
+/// end tick, or the one on the tick before when it was cleared at the end
+/// tick.
+fn capturer(end_tick: i32, evidence: &Evidence) -> Option<u32> {
+    if !zones_switched_off(end_tick, evidence) {
         return None;
     }
+    let end = i64::from(end_tick);
 
     // The carrier as of the last change before `limit`.
     let carrier_before = |limit: i64| {
@@ -121,11 +146,23 @@ fn capturer(end_tick: i32, evidence: &Evidence) -> Option<u32> {
         .map(|p| p.user_id)
 }
 
-/// A round end from either source, normalized.
+/// A round end from either source, normalized. `winner` is None only for a
+/// fallback announcement that names the match's winner rather than this
+/// round's.
 struct End {
     tick: i32,
-    winner: String,
+    winner: Option<String>,
     reason: Option<String>,
+}
+
+/// Whether a RoundResult message is one of the three texts
+/// `CNEORules::SetWinningTeam` substitutes when a round ends the match or
+/// leads into sudden death, instead of the round's own reason (upstream
+/// `neo_gamerules.cpp:3813-3866`).
+fn is_match_end_text(message: &str) -> bool {
+    ["wins the match", "The match is tied!", "Next round: Sudden death!"]
+        .iter()
+        .any(|text| message.contains(text))
 }
 
 /// Maps a round-end message to a short win-reason code.
@@ -133,8 +170,10 @@ struct End {
 /// The phrases are the victory strings NEO_VICTORY_* builds in upstream
 /// NeotokyoRebuild/neo's `src/game/shared/neo/neo_gamerules.cpp` (lines
 /// 3864-3899), plus the deathmatch message next to it (line 1733). NULL
-/// means the reason could not be identified: an empty message, or a
-/// match-end text such as "wins the match", which replaces the reason.
+/// means the reason could not be identified from the text alone: an empty
+/// message, or a match-end text such as "wins the match", which replaces
+/// the round's own reason. `derive` recovers that case separately, in
+/// `recovered_reason`.
 fn win_reason_code(message: &str) -> Option<String> {
     if message.trim() == "TIE" {
         return Some("tie".to_string());
@@ -150,6 +189,76 @@ fn win_reason_code(message: &str) -> Option<String> {
         ("wins by forfeit", "forfeit"),
     ];
     CODES.iter().find(|(phrase, _)| message.contains(phrase)).map(|(_, code)| code.to_string())
+}
+
+/// Whether a kill in `kills` fell within `END_WINDOW` of `end_tick`.
+fn kill_near_end(end_tick: i32, kills: &[Kill]) -> bool {
+    kills.iter().any(|k| near_end(k.tick, end_tick))
+}
+
+/// The class of the player who owns `entity_id`, by their latest sample at
+/// or before `tick`, or None when no such sample exists.
+fn class_at(entity_id: u32, tick: i32, samples: &[PlayerSample]) -> Option<i64> {
+    samples
+        .iter()
+        .filter(|s| s.entity_id == entity_id && i64::from(s.tick) <= i64::from(tick))
+        .max_by_key(|s| s.tick)
+        .map(|s| s.class_num)
+}
+
+/// Whether a kill within the window around `end_tick` downed the VIP, NT;RE
+/// class 3 (`neo_enums.h:21`), ending the round for the opposing team
+/// (upstream `neo_gamerules.cpp:1619`).
+fn vip_killed(end_tick: i32, evidence: &Evidence) -> bool {
+    const VIP_CLASS: i64 = 3;
+    evidence.kills.iter().filter(|k| near_end(k.tick, end_tick)).any(|k| {
+        evidence
+            .players
+            .get(&k.victim_userid)
+            .and_then(|p| class_at(p.entity_id, k.tick, evidence.player_samples))
+            == Some(VIP_CLASS)
+    })
+}
+
+/// Whether every player on `losing_team`, by their latest sample at or
+/// before `end_tick`, was dead, and at least one such player exists.
+fn losers_eliminated(losing_team: i64, end_tick: i32, evidence: &Evidence) -> bool {
+    let mut latest: HashMap<u32, &PlayerSample> = HashMap::new();
+    for s in evidence.player_samples.iter().filter(|s| i64::from(s.tick) <= i64::from(end_tick)) {
+        latest.entry(s.entity_id).and_modify(|cur| if s.tick > cur.tick { *cur = s }).or_insert(s);
+    }
+    let losers: Vec<_> = latest.values().filter(|s| s.team == losing_team).collect();
+    !losers.is_empty() && losers.iter().all(|s| !s.alive)
+}
+
+/// The team opposite `winner` (`jinrai` team 2, `nsf` team 3, per
+/// `player_samples.team`), or None when `winner` names neither.
+fn losing_team(winner: &str) -> Option<i64> {
+    match winner {
+        "Jinrai" => Some(3),
+        "NSF" => Some(2),
+        _ => None,
+    }
+}
+
+/// Recovers a round's real win reason when a match-end text has replaced
+/// it, from the RoundResult's team field and the game state at the round's
+/// end tick. Checked in the order the server itself checks a round
+/// (`neo_gamerules.cpp:1547`, `:1589`, `:1698`); the first that matches
+/// wins, and forfeits and points wins hidden behind the match text stay
+/// unrecoverable (None).
+fn recovered_reason(winner: &str, end_tick: i32, evidence: &Evidence) -> Option<String> {
+    if winner == "Tie" {
+        return Some("tie".to_string());
+    }
+    if zones_switched_off(end_tick, evidence) || vip_killed(end_tick, evidence) {
+        return Some("objective".to_string());
+    }
+    let losing_team = losing_team(winner)?;
+    if losers_eliminated(losing_team, end_tick, evidence) && kill_near_end(end_tick, evidence.kills) {
+        return Some("elimination".to_string());
+    }
+    None
 }
 
 /// Build the rounds of one demo. `announcements` supplies the start markers,
@@ -168,7 +277,18 @@ pub fn derive(
             .iter()
             .filter_map(|a| {
                 let c = win_re.captures(&a.text)?;
-                Some(End { tick: a.tick, winner: c[1].to_string(), reason: win_reason_code(&a.text) })
+                if is_match_end_text(&a.text) {
+                    // Without a RoundResult's team field, a match-end
+                    // announcement gives no way to recover this round's own
+                    // winner or reason: the name it carries is the match's.
+                    Some(End { tick: a.tick, winner: None, reason: None })
+                } else {
+                    Some(End {
+                        tick: a.tick,
+                        winner: Some(c[1].to_string()),
+                        reason: win_reason_code(&a.text),
+                    })
+                }
             })
             .collect()
     } else {
@@ -181,8 +301,12 @@ pub fn derive(
                     "tie" => "Tie".to_string(),
                     other => other.to_string(),
                 };
-                let reason = win_reason_code(&r.message);
-                End { tick: r.tick, winner, reason }
+                let reason = if is_match_end_text(&r.message) {
+                    recovered_reason(&winner, r.tick, evidence)
+                } else {
+                    win_reason_code(&r.message)
+                };
+                End { tick: r.tick, winner: Some(winner), reason }
             })
             .collect()
     };
@@ -199,7 +323,7 @@ pub fn derive(
     let close = |open: &mut Option<Round>, end: End, rounds: &mut Vec<Round>| {
         let mut r = open.take().unwrap_or_else(Round::unstarted);
         r.end_tick = Some(end.tick);
-        r.winner = Some(end.winner);
+        r.winner = end.winner;
         r.reason = end.reason;
         rounds.push(r);
     };
@@ -251,7 +375,7 @@ mod tests {
 
     /// Rounds from text and round results alone, as when the entity pass fails.
     fn derive_without_entities(anns: &[Announcement], results: &[RoundResult]) -> Vec<Round> {
-        derive(anns, results, &Evidence::new(None, &HashMap::new()))
+        derive(anns, results, &Evidence::new(None, &HashMap::new(), &[]))
     }
 
     fn player(user_id: u32, entity_id: u32, first_seen_tick: i32) -> (u32, Player) {
@@ -270,6 +394,54 @@ mod tests {
         CarrierChange { tick, entity_id }
     }
 
+    /// A player sample with only the fields the match-end rules read set;
+    /// the rest take harmless defaults.
+    fn sample(tick: u32, entity_id: u32, team: i64, class_num: i64, alive: bool) -> PlayerSample {
+        PlayerSample {
+            tick,
+            entity_id,
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+            eye_pitch: 0.0,
+            eye_yaw: 0.0,
+            vx: 0.0,
+            vy: 0.0,
+            vz: 0.0,
+            weapon: String::new(),
+            health: if alive { 100 } else { -1 },
+            team,
+            class_num,
+            camo: false,
+            alive,
+            in_pvs: true,
+        }
+    }
+
+    fn kill(tick: i32, victim_userid: u32, attacker_userid: u32) -> Kill {
+        Kill {
+            tick,
+            victim_userid,
+            attacker_userid,
+            assists: 0,
+            weapon: String::new(),
+            headshot: false,
+            suicide: false,
+            explosive: false,
+            ghoster: false,
+        }
+    }
+
+    /// The one round from a start at tick 2 to a RoundResult naming `team`
+    /// and carrying `message` at tick 100, with `evidence` behind it.
+    fn match_end_round(team: &str, message: &str, evidence: &Evidence) -> Round {
+        let anns = [ann(2, "- CTG ROUND 1 STARTED -")];
+        let results = [res(100, team, message)];
+        let mut rounds = derive(&anns, &results, evidence);
+        assert_eq!(rounds.len(), 1);
+        rounds.remove(0)
+    }
+
     /// One round from tick 2 to tick 100, with capture zones 50 and 51
     /// switched on at tick 3 and off at each `(tick, zone)` in `zone_offs`.
     fn capturer_of(
@@ -286,7 +458,13 @@ mod tests {
         for &(tick, entity_id) in zone_offs {
             zones.push(ZoneChange { tick, entity_id, active: false });
         }
-        let evidence = Evidence { carrier_changes: carriers, zone_changes: &zones, players };
+        let evidence = Evidence {
+            carrier_changes: carriers,
+            zone_changes: &zones,
+            players,
+            player_samples: &[],
+            kills: &[],
+        };
         let rounds = derive(&anns, &results, &evidence);
         assert_eq!(rounds.len(), 1);
         rounds[0].capturer_userid
@@ -339,11 +517,24 @@ mod tests {
         ];
         let rounds = derive_without_entities(&anns, &[]);
         assert_eq!(rounds.len(), 2);
+        // "Team NSF wins the match!" names the match's winner, not round 3's,
+        // so neither the winner nor the reason is recoverable from it alone.
         assert_eq!(
             (rounds[0].number, rounds[0].winner.as_deref(), rounds[0].reason.as_deref()),
-            (Some(3), Some("NSF"), None)
+            (Some(3), None, None)
         );
         assert_eq!((rounds[1].number, rounds[1].winner.as_deref()), (Some(4), Some("Jinrai")));
+    }
+
+    #[test]
+    fn fallback_match_end_announcement_leaves_winner_and_reason_null() {
+        let anns = [ann(10, "- CTG ROUND 5 STARTED -"), ann(90, "Team NSF wins the match!")];
+        let rounds = derive_without_entities(&anns, &[]);
+        assert_eq!(rounds.len(), 1);
+        assert_eq!(
+            (rounds[0].winner.as_deref(), rounds[0].reason.as_deref()),
+            (None, None)
+        );
     }
 
     #[test]
@@ -371,6 +562,100 @@ mod tests {
                 "message: {message:?}"
             );
         }
+    }
+
+    #[test]
+    fn match_end_tie_gives_tie() {
+        let roster = HashMap::new();
+        let evidence = Evidence::new(None, &roster, &[]);
+        let r = match_end_round("tie", "Next round: Sudden death!", &evidence);
+        assert_eq!((r.winner.as_deref(), r.reason.as_deref()), (Some("Tie"), Some("tie")));
+    }
+
+    #[test]
+    fn match_end_texts_take_the_same_path() {
+        let roster = HashMap::new();
+        let evidence = Evidence::new(None, &roster, &[]);
+        let tied = match_end_round("tie", "The match is tied!", &evidence);
+        let sudden_death = match_end_round("tie", "Next round: Sudden death!", &evidence);
+        let expected = (Some("Tie"), Some("tie"));
+        assert_eq!((tied.winner.as_deref(), tied.reason.as_deref()), expected);
+        assert_eq!((sudden_death.winner.as_deref(), sudden_death.reason.as_deref()), expected);
+    }
+
+    #[test]
+    fn match_end_zones_off_gives_objective() {
+        let zones = [
+            ZoneChange { tick: 3, entity_id: 50, active: true },
+            ZoneChange { tick: 100, entity_id: 50, active: false },
+        ];
+        let evidence = Evidence {
+            carrier_changes: &[],
+            zone_changes: &zones,
+            players: &HashMap::new(),
+            player_samples: &[],
+            kills: &[],
+        };
+        let r = match_end_round("nsf", "Team NSF wins the match!", &evidence);
+        assert_eq!((r.winner.as_deref(), r.reason.as_deref()), (Some("NSF"), Some("objective")));
+    }
+
+    #[test]
+    fn match_end_killed_vip_gives_objective() {
+        let players = HashMap::from([player(11, 21, 0)]);
+        // The victim's class at the kill tick is 3, the VIP.
+        let samples = [sample(50, 21, 3, 3, false)];
+        let kills = [kill(101, 11, 5)];
+        let evidence = Evidence {
+            carrier_changes: &[],
+            zone_changes: &[],
+            players: &players,
+            player_samples: &samples,
+            kills: &kills,
+        };
+        let r = match_end_round("jinrai", "Team Jinrai wins the match!", &evidence);
+        assert_eq!((r.winner.as_deref(), r.reason.as_deref()), (Some("Jinrai"), Some("objective")));
+    }
+
+    #[test]
+    fn match_end_losers_dead_with_kill_gives_elimination() {
+        // Winner Jinrai (team 2); the losing team, NSF (team 3), has two
+        // players, both dead by their last sample at or before the end tick.
+        let players = HashMap::from([player(1, 10, 0), player(2, 11, 0)]);
+        let samples = [sample(50, 10, 3, 0, false), sample(50, 11, 3, 0, false)];
+        let kills = [kill(99, 1, 5)];
+        let evidence = Evidence {
+            carrier_changes: &[],
+            zone_changes: &[],
+            players: &players,
+            player_samples: &samples,
+            kills: &kills,
+        };
+        let r = match_end_round("jinrai", "Team Jinrai wins the match!", &evidence);
+        assert_eq!((r.winner.as_deref(), r.reason.as_deref()), (Some("Jinrai"), Some("elimination")));
+    }
+
+    #[test]
+    fn match_end_losers_dead_without_kill_in_window_gives_null() {
+        let players = HashMap::from([player(1, 10, 0)]);
+        let samples = [sample(50, 10, 3, 0, false)];
+        let evidence = Evidence {
+            carrier_changes: &[],
+            zone_changes: &[],
+            players: &players,
+            player_samples: &samples,
+            kills: &[],
+        };
+        let r = match_end_round("jinrai", "Team Jinrai wins the match!", &evidence);
+        assert_eq!((r.winner.as_deref(), r.reason.as_deref()), (Some("Jinrai"), None));
+    }
+
+    #[test]
+    fn match_end_without_evidence_gives_null() {
+        let roster = HashMap::new();
+        let evidence = Evidence::new(None, &roster, &[]);
+        let r = match_end_round("jinrai", "Team Jinrai wins the match!", &evidence);
+        assert_eq!((r.winner.as_deref(), r.reason.as_deref()), (Some("Jinrai"), None));
     }
 
     #[test]

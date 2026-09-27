@@ -114,7 +114,7 @@ pub fn parse_one(path: &Path, db: &Db, opts: &Options) -> Result<()> {
         .unwrap_or_default();
     // Rounds take start markers from the announcements, ends from the net
     // pass, and the capturer from entity state, so they wait for all three.
-    let evidence = rounds::Evidence::new(entity_output.as_ref(), &net.players);
+    let evidence = rounds::Evidence::new(entity_output.as_ref(), &net.players, &net.kills);
     let rounds = rounds::derive(announcements.found(&ctx), &net.round_results, &evidence);
     let mut extractors: Vec<&mut dyn FrameExtractor> =
         vec![&mut announcements, &mut pov, &mut console, &mut inputs, &mut net];

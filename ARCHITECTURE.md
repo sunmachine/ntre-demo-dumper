@@ -86,6 +86,14 @@ them, and the ghost capturer has to come from entity state instead. On the
 2026-09-13 and 2026-09-25 SourceTV recordings, `SELECT DISTINCT name FROM
 game_events` returns only events from the list.
 
+When a round ends the match or leads into sudden death, `SetWinningTeam`
+substitutes "Team X wins the match!", "The match is tied!" or "Next round:
+Sudden death!" for the round's own reason text, but the `RoundResult`
+message's team field still names that round's winner, or `tie` (upstream
+`src/game/shared/neo/neo_gamerules.cpp:3813-3866`, `:3906`). `rounds`
+recovers the round's real reason from that team field and the game state at
+the round's end tick instead.
+
 ## Entity layer
 
 `extract/entities.rs` decodes svc_PacketEntities through tf-demo-parser's

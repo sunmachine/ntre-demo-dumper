@@ -309,7 +309,7 @@ only complete record of round outcomes.
 |---|---|
 | `tick` | when the round ended |
 | `team` | `jinrai`, `nsf`, or `tie`, as sent |
-| `message` | the victory text, e.g. `Team NSF wins by capturing the ghost!` or `TIE`; empty for map-scripted wins |
+| `message` | the victory text, e.g. `Team NSF wins by capturing the ghost!` or `TIE`; empty for map-scripted wins. For a round that also ends the match or leads into sudden death, this holds the match-end text, e.g. `Team NSF wins the match!`, instead of the round's own reason |
 
 A round aborted by an admin pause and restarted sends no result.
 
@@ -370,9 +370,18 @@ captures). `rounds` takes its start markers from these. `seconds` is precomputed
 One row per round: the `ROUND N STARTED` announcement supplies the number
 and start tick, and `round_results` supplies the end tick and outcome. A
 demo without `RoundResult` messages falls back to `Team X wins ...`
-announcements for its ends, which cannot see ties. `round_starts` holds
-the wire-fact start events. The capturer comes from the capture zones and
-the ghost carrier in the entity data.
+announcements for its ends, which cannot see ties; there, a match-end line
+leaves the round's winner and reason NULL, because it names the match's
+winner rather than the round's. `round_starts` holds the wire-fact start
+events. The capturer comes from the capture zones and the ghost carrier in
+the entity data.
+
+When a round ends the match or leads into sudden death, the game shows
+that message instead of the round's reason. `win_reason` then comes from
+the round result's team field and the game state at the round's last
+tick: `tie` when no team won, `objective` when the capture zones switched
+off or the VIP was killed, `elimination` when the losing team had no one
+alive. Otherwise it is NULL.
 
 | column | meaning |
 |---|---|
