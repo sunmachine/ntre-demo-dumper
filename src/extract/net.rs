@@ -9,7 +9,9 @@ use std::collections::HashMap;
 
 use super::{DemoContext, FrameExtractor, Summary};
 use crate::demo::frames::{Frame, FrameKind};
-use crate::demo::net::{parse_game_event, walk_packet, EventDefs, EventValue, NetMessage};
+use crate::demo::net::{
+    parse_game_event, walk_packet, EventDefs, EventValue, NetMessage, ServerInfo,
+};
 use crate::demo::stringtables::parse_userinfo;
 use crate::output::sqlite::Db;
 
@@ -92,6 +94,14 @@ pub struct RoundResult {
     pub message: String,
 }
 
+/// One replicated convar value (net_SetConVar). The signon snapshot is at
+/// tick 0; later rows are changes made while recording.
+pub struct ServerCvar {
+    pub tick: i32,
+    pub name: String,
+    pub value: String,
+}
+
 pub struct Player {
     pub entity_id: u32,
     pub user_id: u32,
@@ -115,6 +125,9 @@ pub struct NetPass {
     pub round_results: Vec<RoundResult>,
     pub chat: Vec<ChatLine>,
     pub players: HashMap<u32, Player>, // by userid
+    /// The first svc_ServerInfo; `None` if the signon never carried one.
+    pub server_info: Option<ServerInfo>,
+    pub cvars: Vec<ServerCvar>,
     warnings: usize,
 }
 
@@ -349,6 +362,20 @@ impl NetPass {
         }
     }
 
+    /// SourceTV appends its own `tv_transmitall` to the server's list, so a
+    /// name can repeat within one message; the last value wins.
+    fn on_set_convar(&mut self, tick: i32, pairs: Vec<(String, String)>) {
+        for (name, value) in pairs {
+            if let Some(row) =
+                self.cvars.iter_mut().rev().take_while(|c| c.tick == tick).find(|c| c.name == name)
+            {
+                row.value = value;
+            } else {
+                self.cvars.push(ServerCvar { tick, name, value });
+            }
+        }
+    }
+
     fn on_user_message(&mut self, tick: i32, kind: u8, data: &crate::demo::bits::BitChunk) {
         if kind == ROUND_RESULT {
             match parse_round_result(tick, data) {
@@ -384,8 +411,15 @@ impl FrameExtractor for NetPass {
                 if result.is_err() {
                     self.warnings += 1;
                 }
+                // Signon frames carry the server's uptime tick; the snapshot
+                // they hold is the state at the start of the recording.
+                let cvar_tick = if frame.kind == FrameKind::Signon { 0 } else { tick };
                 for msg in collected {
                     match msg {
+                        NetMessage::ServerInfo(info) => {
+                            self.server_info.get_or_insert(info);
+                        }
+                        NetMessage::SetConVar(pairs) => self.on_set_convar(cvar_tick, pairs),
                         NetMessage::GameEventList(defs) => self.defs = defs,
                         NetMessage::GameEvent(chunk) => {
                             match parse_game_event(&chunk, &self.defs) {
@@ -443,6 +477,7 @@ impl FrameExtractor for NetPass {
         db.insert_round_results(demo_id, &self.round_results)?;
         db.insert_chat(demo_id, &self.chat)?;
         db.insert_game_events(demo_id, &self.events)?;
+        db.insert_server_cvars(demo_id, &self.cvars)?;
         let mut summary: Summary = vec![
             ("players".into(), self.players.len()),
             ("kills".into(), self.kills.len()),
@@ -455,6 +490,7 @@ impl FrameExtractor for NetPass {
             ("round results".into(), self.round_results.len()),
             ("chat lines".into(), self.chat.len()),
             ("game events".into(), self.events.len()),
+            ("server cvars".into(), self.cvars.len()),
         ];
         if self.warnings > 0 {
             summary.push(("net decode warnings".into(), self.warnings));
@@ -512,6 +548,15 @@ mod tests {
         let line = parse_say_text2(1, &say_text2("Server restarting", &[])).unwrap();
         assert_eq!(line.text, "Server restarting");
         assert!(line.from.is_empty());
+    }
+
+    #[test]
+    fn repeated_convar_in_one_message_keeps_last_value() {
+        let mut pass = NetPass::default();
+        pass.on_set_convar(0, vec![("tv_transmitall".into(), "1".into()), ("tv_transmitall".into(), "0".into())]);
+        pass.on_set_convar(500, vec![("tv_transmitall".into(), "1".into())]);
+        let rows: Vec<_> = pass.cvars.iter().map(|c| (c.tick, c.value.as_str())).collect();
+        assert_eq!(rows, vec![(0, "0"), (500, "1")]);
     }
 
     #[test]

@@ -42,8 +42,30 @@ pub enum EventValue {
     Bool(bool),
 }
 
+/// svc_ServerInfo, sent once at signon. Fields this crate has no use for
+/// (protocol, server count, class CRC, sky name, replay flag) are read past.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ServerInfo {
+    pub is_hltv: bool,
+    pub is_dedicated: bool,
+    pub max_classes: u16,
+    /// MD5 of the map file on protocols above 17, a CRC32 in the first four
+    /// bytes below that.
+    pub map_hash: [u8; 16],
+    /// Client slot of the recording client; its entity id is slot + 1.
+    pub player_slot: u8,
+    pub max_clients: u8,
+    pub tick_interval: f32,
+    /// `l` Linux, `w` Windows, as sent.
+    pub os: char,
+    pub host_name: String,
+}
+
 /// Messages surfaced to the caller; everything else is validated and skipped.
 pub enum NetMessage {
+    ServerInfo(ServerInfo),
+    /// net_SetConVar: replicated convar name/value pairs, in wire order.
+    SetConVar(Vec<(String, String)>),
     GameEventList(EventDefs),
     /// Raw event payload (starts with the 9-bit event type id).
     GameEvent(BitChunk),
@@ -81,10 +103,11 @@ pub fn walk_packet(
             5 => {
                 // net_SetConVar: count * (name, value)
                 let count = r.read_bits(8)?;
+                let mut pairs = Vec::with_capacity(count as usize);
                 for _ in 0..count {
-                    r.read_string()?;
-                    r.read_string()?;
+                    pairs.push((r.read_string()?, r.read_string()?));
                 }
+                sink(NetMessage::SetConVar(pairs));
             }
             6 => {
                 r.skip_bits(8 + 32)?; // net_SignonState
@@ -92,22 +115,7 @@ pub fn walk_packet(
             7 => {
                 r.read_string()?; // svc_Print
             }
-            8 => {
-                // svc_ServerInfo
-                r.skip_bits(16 + 32 + 1 + 1 + 32 + 16)?;
-                if protocol > 17 {
-                    r.skip_bits(128)?; // map md5
-                } else {
-                    r.skip_bits(32)?; // map crc
-                }
-                r.skip_bits(8 + 8 + 32 + 8)?; // player slot, max clients, tick interval, os
-                for _ in 0..4 {
-                    r.read_string()?; // game dir, map, sky, host name
-                }
-                if protocol > 15 {
-                    r.read_bit()?; // replay flag
-                }
-            }
+            8 => sink(NetMessage::ServerInfo(read_server_info(&mut r, protocol)?)),
             10 => {
                 // svc_ClassInfo
                 let count = r.read_bits(16)?;
@@ -267,6 +275,41 @@ pub fn walk_packet(
     Ok(())
 }
 
+fn read_server_info(r: &mut BitReader, protocol: i32) -> Result<ServerInfo> {
+    r.skip_bits(16 + 32)?; // protocol, server count
+    let is_hltv = r.read_bit()?;
+    let is_dedicated = r.read_bit()?;
+    r.skip_bits(32)?; // client.dll CRC
+    let max_classes = r.read_bits(16)? as u16;
+    let mut map_hash = [0u8; 16];
+    let hash_len = if protocol > 17 { 16 } else { 4 };
+    for byte in map_hash.iter_mut().take(hash_len) {
+        *byte = r.read_u8()?;
+    }
+    let player_slot = r.read_u8()?;
+    let max_clients = r.read_u8()?;
+    let tick_interval = r.read_f32()?;
+    let os = r.read_u8()? as char;
+    r.read_string()?; // game dir, also in the header
+    r.read_string()?; // map, also in the header
+    r.read_string()?; // sky name
+    let host_name = r.read_string()?;
+    if protocol > 15 {
+        r.read_bit()?; // replay flag
+    }
+    Ok(ServerInfo {
+        is_hltv,
+        is_dedicated,
+        max_classes,
+        map_hash,
+        player_slot,
+        max_clients,
+        tick_interval,
+        os,
+        host_name,
+    })
+}
+
 fn log_base2(mut n: u16) -> u32 {
     let mut result = 0;
     while n > 1 {
@@ -374,6 +417,7 @@ mod tests {
             NetMessage::GameEventList(d) => got_defs = Some(d),
             NetMessage::GameEvent(c) => got_event = Some(c),
             NetMessage::UserMessage { kind, data } => got_um = Some((kind, data)),
+            _ => {}
         })
         .unwrap();
 
@@ -425,6 +469,56 @@ mod tests {
         assert!(matches!(get("x"), Some(EventValue::Int(-880))));
         assert!(matches!(get("big"), Some(EventValue::Int(-70000))));
         assert!(matches!(get("small"), Some(EventValue::Int(200))));
+    }
+
+    /// svc_ServerInfo decodes field by field and leaves the reader aligned
+    /// on the next message; net_SetConVar keeps its pairs in order.
+    #[test]
+    fn surfaces_server_info_and_convars() {
+        let mut w = BitWriter::default();
+        w.write_bits(8, 6);
+        w.write_bits(24, 16); // protocol
+        w.write_bits(27, 32); // server count
+        w.write_bit(true); // hltv
+        w.write_bit(true); // dedicated
+        w.write_bits(u32::MAX, 32); // client CRC
+        w.write_bits(244, 16); // max classes
+        for b in 0..16u32 {
+            w.write_bits(b, 8); // map md5
+        }
+        w.write_bits(0, 8); // player slot
+        w.write_bits(17, 8); // max clients
+        w.write_f32(0.015);
+        w.write_bits(b'l' as u32, 8);
+        for s in ["neo", "ntre_ghost_ctg", "sky_day01_09", "SourceTV"] {
+            w.write_string(s);
+        }
+        w.write_bit(false); // replay
+        w.write_bits(5, 6);
+        w.write_bits(2, 8);
+        for s in ["sv_neo_comp_name", "ads26", "tv_transmitall", "1"] {
+            w.write_string(s);
+        }
+        w.write_bits(18, 6); // svc_SetView follows, to prove alignment
+        w.write_bits(1, 11);
+
+        let mut info = None;
+        let mut cvars = None;
+        walk_packet(&w.bytes, 24, &mut |msg| match msg {
+            NetMessage::ServerInfo(i) => info = Some(i),
+            NetMessage::SetConVar(c) => cvars = Some(c),
+            _ => {}
+        })
+        .unwrap();
+        let info = info.expect("server info");
+        assert!(info.is_hltv && info.is_dedicated);
+        assert_eq!((info.max_classes, info.player_slot, info.max_clients), (244, 0, 17));
+        assert_eq!(info.map_hash[15], 15);
+        assert_eq!(info.tick_interval, 0.015);
+        assert_eq!((info.os, info.host_name.as_str()), ('l', "SourceTV"));
+        let cvars = cvars.expect("convars");
+        assert_eq!(cvars[0], ("sv_neo_comp_name".into(), "ads26".into()));
+        assert_eq!(cvars.len(), 2);
     }
 
     /// Skippable messages must consume exactly their wire size.

@@ -19,6 +19,7 @@ use std::path::Path;
 
 use crate::demo::frames::ViewInfo;
 use crate::demo::header::DemoHeader;
+use crate::demo::net::ServerInfo;
 use crate::extract::announcements::Announcement;
 use crate::extract::rounds::Round;
 
@@ -45,7 +46,17 @@ CREATE TABLE IF NOT EXISTS demos (
     playback_seconds REAL NOT NULL,
     playback_ticks INTEGER NOT NULL,
     playback_frames INTEGER NOT NULL,
-    tickrate REAL NOT NULL         -- seconds = tick / tickrate, in all tables
+    tickrate REAL NOT NULL,        -- seconds = tick / tickrate, in all tables
+    -- From svc_ServerInfo at signon; NULL when the signon carried none.
+    sourcetv INTEGER,              -- 1 SourceTV recording, 0 POV recording
+    dedicated INTEGER,             -- 0 for a listen server
+    server_os TEXT,                -- linux or windows
+    host_name TEXT,                -- server hostname in POV demos, SourceTV name in SourceTV demos
+    max_clients INTEGER,
+    tick_interval REAL,            -- server seconds per tick, shortest decimal form
+    map_md5 TEXT,                  -- hex MD5 of the server's map file
+    recorder_entity_id INTEGER,    -- recording client's entity slot
+    parser_version TEXT NOT NULL   -- dumper version that wrote this demo's rows
 );
 
 -- Player roster: from the string-table dump at recording start plus
@@ -269,6 +280,16 @@ CREATE TABLE IF NOT EXISTS console_cmds (
     cmd TEXT NOT NULL
 );
 
+-- Replicated server convars (net_SetConVar): the signon snapshot at tick 0
+-- holds only values the server changed from their defaults.
+CREATE TABLE IF NOT EXISTS server_cvars (
+    id INTEGER PRIMARY KEY,
+    demo_id INTEGER NOT NULL REFERENCES demos(id),
+    tick INTEGER NOT NULL,       -- 0 = the snapshot at recording start
+    name TEXT NOT NULL,
+    value TEXT NOT NULL
+);
+
 -- Every game event, fields as JSON (queryable via SQLite's json functions).
 CREATE TABLE IF NOT EXISTS game_events (
     id INTEGER PRIMARY KEY,
@@ -367,12 +388,25 @@ impl Db {
         Ok(self.conn.execute_batch("ROLLBACK")?)
     }
 
-    pub fn insert_demo(&self, path: &str, h: &DemoHeader) -> Result<i64> {
+    pub fn insert_demo(&self, path: &str, h: &DemoHeader, si: Option<&ServerInfo>) -> Result<i64> {
+        let os = si.map(|s| match s.os {
+            'l' | 'L' => "linux".to_string(),
+            'w' | 'W' => "windows".to_string(),
+            other => other.to_string(),
+        });
+        let md5 = si.map(|s| s.map_hash.iter().map(|b| format!("{b:02x}")).collect::<String>());
+        // The wire value is an f32. Its Display form is the shortest decimal
+        // that round-trips, so 0.015 is stored as 0.015 rather than as the
+        // f32's exact value, 0.014999999664723873.
+        let tick_interval = si.map(|s| s.tick_interval.to_string().parse::<f64>().unwrap());
         self.conn.execute(
             "INSERT INTO demos (path, demo_protocol, network_protocol, server, client, map,
                                 game_directory, playback_seconds, playback_ticks,
-                                playback_frames, tickrate)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                                playback_frames, tickrate, sourcetv, dedicated, server_os,
+                                host_name, max_clients, tick_interval, map_md5,
+                                recorder_entity_id, parser_version)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
+                     ?17, ?18, ?19, ?20)",
             rusqlite::params![
                 path,
                 h.demo_protocol,
@@ -385,6 +419,15 @@ impl Db {
                 h.playback_ticks,
                 h.playback_frames,
                 h.tickrate(),
+                si.map(|s| s.is_hltv),
+                si.map(|s| s.is_dedicated),
+                os,
+                si.map(|s| s.host_name.clone()),
+                si.map(|s| s.max_clients),
+                tick_interval,
+                md5,
+                si.map(|s| s.player_slot as u32 + 1),
+                env!("CARGO_PKG_VERSION"),
             ],
         )?;
         Ok(self.conn.last_insert_rowid())
@@ -583,6 +626,20 @@ impl Db {
         )?;
         for c in changes {
             ins.execute(rusqlite::params![demo_id, c.tick, c.userid, c.old_rank, c.new_rank])?;
+        }
+        Ok(())
+    }
+
+    pub fn insert_server_cvars(
+        &self,
+        demo_id: i64,
+        cvars: &[crate::extract::net::ServerCvar],
+    ) -> Result<()> {
+        let mut ins = self.conn.prepare(
+            "INSERT INTO server_cvars (demo_id, tick, name, value) VALUES (?1, ?2, ?3, ?4)",
+        )?;
+        for c in cvars {
+            ins.execute(rusqlite::params![demo_id, c.tick, c.name, c.value])?;
         }
         Ok(())
     }
@@ -826,5 +883,48 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// svc_ServerInfo's tick_interval is a 32-bit float. A plain cast to f64
+    /// would store 0.014999999664723873 for a 66.67-tick server.
+    #[test]
+    fn tick_interval_stores_shortest_decimal_form() {
+        use crate::demo::header::DemoHeader;
+        use crate::demo::net::ServerInfo;
+
+        let header = DemoHeader {
+            demo_protocol: 3,
+            network_protocol: 24,
+            server_name: "server".into(),
+            client_name: "client".into(),
+            map_name: "map".into(),
+            game_directory: "neo".into(),
+            playback_seconds: 1.0,
+            playback_ticks: 66,
+            playback_frames: 66,
+            signon_length: 0,
+        };
+        let info = ServerInfo {
+            is_hltv: true,
+            is_dedicated: true,
+            max_classes: 0,
+            map_hash: [0u8; 16],
+            player_slot: 0,
+            max_clients: 17,
+            tick_interval: 0.015,
+            os: 'l',
+            host_name: "SourceTV".into(),
+        };
+
+        let db = super::Db::open(std::path::Path::new(":memory:")).unwrap();
+        let demo_id = db.insert_demo("path", &header, Some(&info)).unwrap();
+        let stored: f64 = db
+            .conn
+            .query_row("SELECT tick_interval FROM demos WHERE id = ?1", [demo_id], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(stored, 0.015);
+        assert_ne!(0.015_f32 as f64, 0.015_f64, "the naive cast this test guards against");
     }
 }

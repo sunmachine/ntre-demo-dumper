@@ -108,6 +108,7 @@ pub fn parse_one(path: &Path, db: &Db, opts: &Options) -> Result<()> {
     };
 
     drop(extractors);
+    let server_info = net.server_info.clone();
     let hits = entity_output
         .as_ref()
         .map(|output| inferred_hits::infer(&output.samples, &net.kills, &net.players))
@@ -120,7 +121,7 @@ pub fn parse_one(path: &Path, db: &Db, opts: &Options) -> Result<()> {
         vec![&mut announcements, &mut pov, &mut console, &mut inputs, &mut net];
 
     db.begin()?;
-    let demo_id = db.insert_demo(&path.display().to_string(), &header)?;
+    let demo_id = db.insert_demo(&path.display().to_string(), &header, server_info.as_ref())?;
     let mut summary = Vec::new();
     for extractor in &mut extractors {
         summary.extend(extractor.persist(db, demo_id, &ctx)?);
