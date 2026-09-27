@@ -53,6 +53,7 @@ rows are recomputed on every parse and may change when a rule improves.
 |---|---|---|---|
 | `demos` | reference | | `id` = every table's `demo_id` |
 | `players` | reference | | the join hub |
+| `server_cvars` | reference | | none |
 | `player_samples` | tick series | PVS-limited in POV | `entity_id` |
 | `ghost_samples` | tick series | PVS-limited in POV | none (ghost entity) |
 | `player_resource` | tick series | | `entity_id` |
@@ -91,6 +92,15 @@ One row per parsed demo file; every other table hangs off `id`.
 | `map`, `game_directory` | e.g. `nt_saitama_ctg`, `neo` |
 | `playback_seconds`, `playback_ticks`, `playback_frames` | recording length |
 | `tickrate` | `playback_ticks / playback_seconds`; use for tick-to-time conversion |
+| `sourcetv` | 1 for a SourceTV recording, 0 for a recording made by a player |
+| `dedicated` | 1 when recorded on a dedicated server |
+| `server_os` | `linux` or `windows` |
+| `host_name` | the name the server sent at connect. For SourceTV this is SourceTV's own name, and `server` holds the hostname |
+| `max_clients` | player slots on the server |
+| `tick_interval` | seconds per server tick, e.g. 0.015 |
+| `map_md5` | MD5 of the map file, which tells versions of one map apart |
+| `recorder_entity_id` | the recording client's entity; joins `players.entity_id` |
+| `parser_version` | the dumper version that wrote this demo's rows |
 
 ### `players`
 
@@ -106,6 +116,19 @@ the latest name.
 | `steamid` | e.g. `[U:1:12345678]`, or `BOT` |
 | `is_bot` | 1 for server bots |
 | `first_seen_tick` | when the player first appeared: 0 for players present when the recording began, the `player_connect` tick for late joiners |
+
+### `server_cvars`
+
+The server settings that differ from the game's defaults. A setting that
+is absent ran at its default. Match rules such as `sv_neo_ctg_round_limit`
+and `sv_neo_comp_name` are here. The game's build version is not recorded
+in demos.
+
+| column | meaning |
+|---|---|
+| `tick` | 0 for settings in force when recording began, otherwise when one changed |
+| `name` | setting name |
+| `value` | setting value, as text |
 
 ## Tick series
 

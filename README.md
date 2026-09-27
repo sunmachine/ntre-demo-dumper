@@ -22,9 +22,10 @@ The crate/binary is named `ntre-demo-dumper`.
 
 ## What it extracts
 
-- **Demo metadata:** map, server, recorder, duration, tickrate (from the fixed
-  1072-byte `HL2DEMO` header; NT;RE demos are demo protocol 3 / network protocol 24,
-  same engine branch as TF2).
+- **Demo metadata:** map, server, recorder, duration, tick rate, whether
+  it is a SourceTV or POV recording, and the map file's MD5.
+- **Server settings:** the rules the server changed from the defaults,
+  such as round limit and competition name.
 - **Announcements:** round starts, round winners, ghost captures, with tick and
   wall-clock timestamps.
 - **Rounds:** start and end tick, winner (including ties), win reason,

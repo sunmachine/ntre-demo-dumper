@@ -74,7 +74,14 @@ parsed **generically against the demo's own event definitions**, never a
 hardcoded schema. NT;RE's `player_death` has different fields than TF2's, so
 a parser with TF2-typed events silently misreads NT;RE demos. The
 `extract/net.rs` extractor builds the kill feed, roster, chat, and the
-generic `game_events` table from these messages.
+generic `game_events` table from these messages. The signon's
+`svc_ServerInfo` and `net_SetConVar` are decoded too, into `demos`'s server
+columns and the `server_cvars` table. The NT;RE build version itself is not
+in this data: the only networked copies of it are client convars flagged
+`FCVAR_USERINFO`, sent from client to server for the connect-time integrity
+check, never from server to client (upstream NeotokyoRebuild/neo
+`src/game/shared/neo/neo_version.cpp:65` and `:74`,
+`src/game/shared/neo/neo_gamerules.cpp:3459-3483`).
 
 SourceTV relays only the game events that `CHLTVDirector::GetModEvents`
 names, in upstream `src/game/server/hltvdirector.cpp:238-257`. They are
