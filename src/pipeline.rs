@@ -1,7 +1,8 @@
-//! Per-demo orchestration: read the file, stream its frames through the
-//! registered extractors, and persist everything in one transaction. This is
-//! the only module that sees all three layers (`demo`, `extract`, `output`);
-//! it holds no parsing or SQL logic of its own.
+//! Per-demo orchestration: read the file, skip it if the database already
+//! holds it, stream its frames through the registered extractors, and persist
+//! everything in one transaction. This is the only module that sees all three
+//! layers (`demo`, `extract`, `output`); it holds no parsing or SQL logic of
+//! its own.
 
 use anyhow::{Context, Result};
 use regex::Regex;
@@ -11,6 +12,7 @@ use std::time::Instant;
 
 use crate::demo::frames::FrameIter;
 use crate::demo::header::{DemoHeader, HEADER_SIZE};
+use crate::demo::identity::DemoIdentity;
 use crate::extract::{
     announcements, console, entities, inferred_hits, inputs, net, pov, rounds, DemoContext,
     FrameExtractor,
@@ -51,9 +53,25 @@ pub fn print_logs(logs: &[(LogLevel, String)]) {
     println!();
 }
 
-pub fn parse_one(path: &Path, db: &Db, opts: &Options) -> Result<()> {
+/// What `parse_one` did with a demo. A skip is not a failure, because the
+/// demo's rows are already in the database.
+pub enum Outcome {
+    Parsed,
+    Skipped,
+}
+
+pub fn parse_one(path: &Path, db: &Db, opts: &Options) -> Result<Outcome> {
     let started = Instant::now();
     let data = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
+    let identity = DemoIdentity::of(&data);
+    if let Some((demo_id, first_path)) = db.find_demo(&identity.sha256)? {
+        println!("  demo file    {}", path.display());
+        println!(
+            "  skipped      already in the database as demo #{demo_id}, first parsed from {first_path}"
+        );
+        println!();
+        return Ok(Outcome::Skipped);
+    }
     let header = DemoHeader::parse(&data)?;
     println!("  demo file    {}", path.display());
     println!("  map          {}", header.map_name);
@@ -121,7 +139,8 @@ pub fn parse_one(path: &Path, db: &Db, opts: &Options) -> Result<()> {
         vec![&mut announcements, &mut pov, &mut console, &mut inputs, &mut net];
 
     db.begin()?;
-    let demo_id = db.insert_demo(&path.display().to_string(), &header, server_info.as_ref())?;
+    let demo_id = identity.id;
+    db.insert_demo(&identity, &path.display().to_string(), &header, server_info.as_ref())?;
     let mut summary = Vec::new();
     for extractor in &mut extractors {
         summary.extend(extractor.persist(db, demo_id, &ctx)?);
@@ -166,5 +185,5 @@ pub fn parse_one(path: &Path, db: &Db, opts: &Options) -> Result<()> {
         if opts.threads == 1 { "" } else { "s" }
     );
     println!();
-    Ok(())
+    Ok(Outcome::Parsed)
 }

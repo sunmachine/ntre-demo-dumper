@@ -9,6 +9,8 @@ so if you add a column, document it.
 
 ## Shared conventions
 
+- **Each demo once.** A demo already in the database is skipped, even under
+  another name.
 - **Ticks and time.** All `tick` columns are server ticks. Convert to seconds
   with `tick / demos.tickrate` (NT;RE runs at ~66.67 ticks/s). Tick 0 is the
   start of the recording, not the start of the match.
@@ -83,7 +85,8 @@ One row per parsed demo file; every other table hangs off `id`.
 
 | column | meaning |
 |---|---|
-| `id` | primary key, referenced by every `demo_id` |
+| `id` | the first 44 bits of `sha256`, so the same file gets the same id in every database |
+| `sha256` | the file's SHA-256, as `sha256sum` prints it |
 | `path` | demo file path as given on the command line |
 | `parsed_at` | UTC timestamp of the parse run |
 | `demo_protocol`, `network_protocol` | from the header; NT;RE is 3 / 24 |
@@ -375,9 +378,12 @@ Query fields with SQLite's JSON functions:
 
 ```sql
 SELECT tick, json_extract(fields, '$.userid') AS victim_userid
-FROM game_events WHERE demo_id = 1 AND name = 'player_death';
+FROM game_events
+WHERE demo_id = (SELECT id FROM demos WHERE map = 'nt_saitama_ctg')
+  AND name = 'player_death';
 
-SELECT DISTINCT name FROM game_events WHERE demo_id = 1;  -- what's in this demo?
+SELECT DISTINCT name FROM game_events  -- what's in this demo?
+WHERE demo_id = (SELECT id FROM demos WHERE map = 'nt_saitama_ctg');
 ```
 
 ## Derived tables
@@ -501,5 +507,5 @@ JOIN player_samples ps
   AND ps.tick = (SELECT MAX(tick) FROM player_samples
                  WHERE demo_id = k.demo_id AND entity_id = v.entity_id
                    AND tick <= k.tick)
-WHERE k.demo_id = 1;
+WHERE k.demo_id = (SELECT id FROM demos WHERE map = 'nt_saitama_ctg');
 ```
