@@ -34,6 +34,9 @@ so if you add a column, document it.
 
   Untagged event-derived tables work in both demo types but can be empty
   for demos recorded on NT;RE versions predating the event.
+- **Schema version.** A database records the schema version that wrote it,
+  and the dumper refuses to add demos to a database written by another
+  version, so parse into a new file after upgrading.
 
 ## Table index
 
@@ -373,7 +376,15 @@ the wire-fact start events.
 | `round_number` | as announced by the game; NULL if the first start marker was missed. A round restarted after an admin pause repeats its number |
 | `start_tick`, `end_tick` | NULL when the demo started mid-round, or the round never ended (cut off, or aborted by a pause) |
 | `winner` | `Jinrai`, `NSF`, or `Tie`; NULL for a round that never ended |
-| `win_reason` | e.g. `by capturing the ghost`, `by eliminating the other team`, `the match`, `tie` |
+| `win_reason` | how the round was won, below; NULL when unknown. The full text is in `round_results.message` |
+
+| `win_reason` | meaning |
+|---|---|
+| `objective` | the ghost was captured, or the VIP escaped or was killed |
+| `elimination` | every player on the losing team was killed |
+| `score` | a points win in TDM, JGR or deathmatch |
+| `forfeit` | the VIP left the game |
+| `tie` | no team won |
 
 ## Inferred tables
 

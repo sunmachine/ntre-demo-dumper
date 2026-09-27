@@ -33,6 +33,30 @@ struct End {
     reason: Option<String>,
 }
 
+/// Maps a round-end message to a short win-reason code.
+///
+/// The phrases are the victory strings NEO_VICTORY_* builds in upstream
+/// NeotokyoRebuild/neo's `src/game/shared/neo/neo_gamerules.cpp` (lines
+/// 3864-3899), plus the deathmatch message next to it (line 1733). NULL
+/// means the reason could not be identified: an empty message, or a
+/// match-end text such as "wins the match", which replaces the reason.
+fn win_reason_code(message: &str) -> Option<String> {
+    if message.trim() == "TIE" {
+        return Some("tie".to_string());
+    }
+    const CODES: &[(&str, &str)] = &[
+        ("wins by capturing the ghost", "objective"),
+        ("wins by escorting the vip", "objective"),
+        ("wins by eliminating the vip", "objective"),
+        ("wins by eliminating the other team", "elimination"),
+        ("wins by highest score", "score"),
+        ("wins by numbers", "score"),
+        ("is the winner of the deathmatch", "score"),
+        ("wins by forfeit", "forfeit"),
+    ];
+    CODES.iter().find(|(phrase, _)| message.contains(phrase)).map(|(_, code)| code.to_string())
+}
+
 pub fn derive(announcements: &[Announcement], results: &[RoundResult]) -> Vec<Round> {
     let start_re = Regex::new(r"ROUND (\d+) STARTED").unwrap();
     let win_re = Regex::new(r"Team (\w+) wins( [a-z ]*)?!").unwrap();
@@ -42,11 +66,7 @@ pub fn derive(announcements: &[Announcement], results: &[RoundResult]) -> Vec<Ro
             .iter()
             .filter_map(|a| {
                 let c = win_re.captures(&a.text)?;
-                Some(End {
-                    tick: a.tick,
-                    winner: c[1].to_string(),
-                    reason: c.get(2).map(|m| m.as_str().trim().to_string()),
-                })
+                Some(End { tick: a.tick, winner: c[1].to_string(), reason: win_reason_code(&a.text) })
             })
             .collect()
     } else {
@@ -59,11 +79,7 @@ pub fn derive(announcements: &[Announcement], results: &[RoundResult]) -> Vec<Ro
                     "tie" => "Tie".to_string(),
                     other => other.to_string(),
                 };
-                let reason = match win_re.captures(&r.message) {
-                    Some(c) => c.get(2).map(|m| m.as_str().trim().to_string()),
-                    None if r.message.is_empty() => None,
-                    None => Some(r.message.to_lowercase()),
-                };
+                let reason = win_reason_code(&r.message);
                 End { tick: r.tick, winner, reason }
             })
             .collect()
@@ -144,7 +160,7 @@ mod tests {
         );
         assert_eq!(
             (rounds[1].winner.as_deref(), rounds[1].reason.as_deref()),
-            (Some("NSF"), Some("by capturing the ghost"))
+            (Some("NSF"), Some("objective"))
         );
         assert_eq!((rounds[2].number, rounds[2].end_tick), (Some(3), None));
     }
@@ -176,8 +192,35 @@ mod tests {
         assert_eq!(rounds.len(), 2);
         assert_eq!(
             (rounds[0].number, rounds[0].winner.as_deref(), rounds[0].reason.as_deref()),
-            (Some(3), Some("NSF"), Some("the match"))
+            (Some(3), Some("NSF"), None)
         );
         assert_eq!((rounds[1].number, rounds[1].winner.as_deref()), (Some(4), Some("Jinrai")));
+    }
+
+    #[test]
+    fn win_reason_code_covers_every_victory_text() {
+        let cases = [
+            ("Team NSF wins by capturing the ghost!\n", Some("objective")),
+            ("Team Jinrai wins by escorting the vip!\n", Some("objective")),
+            ("Team NSF wins by eliminating the vip!\n", Some("objective")),
+            ("Team Jinrai wins by eliminating the other team!\n", Some("elimination")),
+            ("Team NSF wins by highest score!\n", Some("score")),
+            ("Team Jinrai wins by numbers!\n", Some("score")),
+            ("SomePlayer is the winner of the deathmatch!\n", Some("score")),
+            ("Team NSF wins by forfeit!\n", Some("forfeit")),
+            ("TIE\n", Some("tie")),
+            ("Team NSF wins the match!\n", None),
+            ("The match is tied!\n", None),
+            ("Next round: Sudden death!\n", None),
+            ("", None),
+            ("Unknown Neotokyo victory reason 7\n", None),
+        ];
+        for (message, expected) in cases {
+            assert_eq!(
+                win_reason_code(message).as_deref(),
+                expected,
+                "message: {message:?}"
+            );
+        }
     }
 }

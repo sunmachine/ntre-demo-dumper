@@ -8,8 +8,12 @@
 //! Comments inside a CREATE TABLE statement are preserved by SQLite and shown
 //! by `.schema`, so they double as end-user documentation; comments between
 //! statements do not.
+//!
+//! A release that changes an existing table's columns or stored values
+//! raises `SCHEMA_VERSION`. A database written by a different version is
+//! refused rather than migrated, so old and new values never mix in one file.
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use rusqlite::Connection;
 use std::path::Path;
 
@@ -17,6 +21,9 @@ use crate::demo::frames::ViewInfo;
 use crate::demo::header::DemoHeader;
 use crate::extract::announcements::Announcement;
 use crate::extract::rounds::Round;
+
+/// Stored as `PRAGMA user_version`; see the module comment for when to raise it.
+const SCHEMA_VERSION: i32 = 1;
 
 pub struct Db {
     conn: Connection,
@@ -304,7 +311,7 @@ CREATE TABLE IF NOT EXISTS rounds (
     start_tick INTEGER,
     end_tick INTEGER,
     winner TEXT,
-    win_reason TEXT
+    win_reason TEXT -- objective, elimination, score, forfeit or tie; NULL when unknown
 );
 
 CREATE INDEX IF NOT EXISTS idx_player_samples_demo_tick ON player_samples(demo_id, tick);
@@ -320,7 +327,26 @@ impl Db {
     pub fn open(path: &Path) -> Result<Self> {
         let conn = Connection::open(path)?;
         conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")?;
+
+        // A brand new file also reads user_version 0, so the check keys on
+        // the `demos` table existing rather than on the version alone.
+        let has_demos_table: bool = conn.query_row(
+            "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'demos')",
+            [],
+            |row| row.get(0),
+        )?;
+        if has_demos_table {
+            let found: i32 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+            if found != SCHEMA_VERSION {
+                return Err(anyhow!(
+                    "{} was written by schema version {found}, this build writes version {SCHEMA_VERSION}; parse into a new database file",
+                    path.display()
+                ));
+            }
+        }
+
         conn.execute_batch(SCHEMA)?;
+        conn.execute_batch(&format!("PRAGMA user_version = {SCHEMA_VERSION}"))?;
         Ok(Self { conn })
     }
 
@@ -718,8 +744,45 @@ impl Db {
 
 #[cfg(test)]
 mod tests {
-    use super::SCHEMA;
+    use super::{Db, SCHEMA, SCHEMA_VERSION};
     use rusqlite::Connection;
+
+    /// A unique path in the system temp dir; there is no tempfile crate here.
+    fn temp_db_path(label: &str) -> std::path::PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("ntre-demo-parser-test-{label}-{nanos}.sqlite"))
+    }
+
+    #[test]
+    fn fresh_database_is_stamped_with_current_schema_version() {
+        let path = temp_db_path("fresh");
+        let db = Db::open(&path).unwrap();
+        let found: i32 = db.conn.query_row("PRAGMA user_version", [], |row| row.get(0)).unwrap();
+        assert_eq!(found, SCHEMA_VERSION);
+        drop(db);
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn database_from_another_schema_version_is_refused() {
+        let path = temp_db_path("stale");
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(SCHEMA).unwrap();
+            conn.execute_batch("PRAGMA user_version = 0;").unwrap();
+        }
+        let err = match Db::open(&path) {
+            Ok(_) => panic!("a database from another schema version should be refused"),
+            Err(e) => e.to_string(),
+        };
+        assert!(err.contains(&path.display().to_string()), "{err}");
+        assert!(err.contains("schema version 0"), "{err}");
+        assert!(err.contains(&format!("version {SCHEMA_VERSION}")), "{err}");
+        std::fs::remove_file(&path).unwrap();
+    }
 
     /// SCHEMA.md must mention (in backticks) every table and every column,
     /// generated columns included, so schema changes can't silently outrun
