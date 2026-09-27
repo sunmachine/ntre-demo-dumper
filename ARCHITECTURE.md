@@ -111,7 +111,9 @@ and never runs its unsafe typed-event reader. Player classes are found
 dynamically (server class names ending in "Player"), props are matched by
 name (`m_vecOrigin`, `m_angEyeAngles[0]`, `m_hActiveWeapon`, and others)
 after resolving identifiers from the demo's data tables, and the active
-weapon handle resolves to a class name via per-entity class tracking. The
+weapon handle resolves to a class name via per-entity class tracking, then
+to the weapon's entity name via a static class table built from upstream's
+`LINK_ENTITY_TO_CLASS(weapon_...)` lines (`entities.rs`). The
 game rules proxy and the ghost capture zones are found the same way, by
 class names ending in "GameRulesProxy" and "GhostCapturePoint". The proxy's
 `m_iGhosterPlayer` names the ghost carrier, and each zone's `m_bIsActive`

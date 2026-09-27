@@ -235,8 +235,8 @@ fn losers_eliminated(losing_team: i64, end_tick: i32, evidence: &Evidence) -> bo
 /// `player_samples.team`), or None when `winner` names neither.
 fn losing_team(winner: &str) -> Option<i64> {
     match winner {
-        "Jinrai" => Some(3),
-        "NSF" => Some(2),
+        "jinrai" => Some(3),
+        "nsf" => Some(2),
         _ => None,
     }
 }
@@ -248,7 +248,7 @@ fn losing_team(winner: &str) -> Option<i64> {
 /// wins, and forfeits and points wins hidden behind the match text stay
 /// unrecoverable (None).
 fn recovered_reason(winner: &str, end_tick: i32, evidence: &Evidence) -> Option<String> {
-    if winner == "Tie" {
+    if winner == "tie" {
         return Some("tie".to_string());
     }
     if zones_switched_off(end_tick, evidence) || vip_killed(end_tick, evidence) {
@@ -285,7 +285,10 @@ pub fn derive(
                 } else {
                     Some(End {
                         tick: a.tick,
-                        winner: Some(c[1].to_string()),
+                        // Lowercased to match round_results.team, which this
+                        // fallback path stands in for when a demo carries
+                        // no RoundResult messages at all.
+                        winner: Some(c[1].to_lowercase()),
                         reason: win_reason_code(&a.text),
                     })
                 }
@@ -295,12 +298,7 @@ pub fn derive(
         results
             .iter()
             .map(|r| {
-                let winner = match r.team.as_str() {
-                    "jinrai" => "Jinrai".to_string(),
-                    "nsf" => "NSF".to_string(),
-                    "tie" => "Tie".to_string(),
-                    other => other.to_string(),
-                };
+                let winner = r.team.clone();
                 let reason = if is_match_end_text(&r.message) {
                     recovered_reason(&winner, r.tick, evidence)
                 } else {
@@ -408,7 +406,7 @@ mod tests {
             vx: 0.0,
             vy: 0.0,
             vz: 0.0,
-            weapon: String::new(),
+            weapon: None,
             health: if alive { 100 } else { -1 },
             team,
             class_num,
@@ -482,12 +480,12 @@ mod tests {
         assert_eq!(rounds.len(), 3);
         assert_eq!(
             (rounds[0].number, rounds[0].end_tick, rounds[0].winner.as_deref(), rounds[0].reason.as_deref()),
-            (Some(1), Some(90), Some("Tie"), Some("tie"))
+            (Some(1), Some(90), Some("tie"), Some("tie"))
         );
         // Without entity state a capture win names no capturer.
         assert_eq!(
             (rounds[1].winner.as_deref(), rounds[1].reason.as_deref(), rounds[1].capturer_userid),
-            (Some("NSF"), Some("objective"), None)
+            (Some("nsf"), Some("objective"), None)
         );
         assert_eq!((rounds[2].number, rounds[2].end_tick), (Some(3), None));
     }
@@ -504,7 +502,7 @@ mod tests {
         );
         assert_eq!(
             (rounds[1].start_tick, rounds[1].end_tick, rounds[1].winner.as_deref()),
-            (Some(50), Some(120), Some("Jinrai"))
+            (Some(50), Some(120), Some("jinrai"))
         );
     }
 
@@ -523,7 +521,7 @@ mod tests {
             (rounds[0].number, rounds[0].winner.as_deref(), rounds[0].reason.as_deref()),
             (Some(3), None, None)
         );
-        assert_eq!((rounds[1].number, rounds[1].winner.as_deref()), (Some(4), Some("Jinrai")));
+        assert_eq!((rounds[1].number, rounds[1].winner.as_deref()), (Some(4), Some("jinrai")));
     }
 
     #[test]
@@ -569,7 +567,7 @@ mod tests {
         let roster = HashMap::new();
         let evidence = Evidence::new(None, &roster, &[]);
         let r = match_end_round("tie", "Next round: Sudden death!", &evidence);
-        assert_eq!((r.winner.as_deref(), r.reason.as_deref()), (Some("Tie"), Some("tie")));
+        assert_eq!((r.winner.as_deref(), r.reason.as_deref()), (Some("tie"), Some("tie")));
     }
 
     #[test]
@@ -578,7 +576,7 @@ mod tests {
         let evidence = Evidence::new(None, &roster, &[]);
         let tied = match_end_round("tie", "The match is tied!", &evidence);
         let sudden_death = match_end_round("tie", "Next round: Sudden death!", &evidence);
-        let expected = (Some("Tie"), Some("tie"));
+        let expected = (Some("tie"), Some("tie"));
         assert_eq!((tied.winner.as_deref(), tied.reason.as_deref()), expected);
         assert_eq!((sudden_death.winner.as_deref(), sudden_death.reason.as_deref()), expected);
     }
@@ -597,7 +595,7 @@ mod tests {
             kills: &[],
         };
         let r = match_end_round("nsf", "Team NSF wins the match!", &evidence);
-        assert_eq!((r.winner.as_deref(), r.reason.as_deref()), (Some("NSF"), Some("objective")));
+        assert_eq!((r.winner.as_deref(), r.reason.as_deref()), (Some("nsf"), Some("objective")));
     }
 
     #[test]
@@ -614,7 +612,7 @@ mod tests {
             kills: &kills,
         };
         let r = match_end_round("jinrai", "Team Jinrai wins the match!", &evidence);
-        assert_eq!((r.winner.as_deref(), r.reason.as_deref()), (Some("Jinrai"), Some("objective")));
+        assert_eq!((r.winner.as_deref(), r.reason.as_deref()), (Some("jinrai"), Some("objective")));
     }
 
     #[test]
@@ -632,7 +630,7 @@ mod tests {
             kills: &kills,
         };
         let r = match_end_round("jinrai", "Team Jinrai wins the match!", &evidence);
-        assert_eq!((r.winner.as_deref(), r.reason.as_deref()), (Some("Jinrai"), Some("elimination")));
+        assert_eq!((r.winner.as_deref(), r.reason.as_deref()), (Some("jinrai"), Some("elimination")));
     }
 
     #[test]
@@ -647,7 +645,7 @@ mod tests {
             kills: &[],
         };
         let r = match_end_round("jinrai", "Team Jinrai wins the match!", &evidence);
-        assert_eq!((r.winner.as_deref(), r.reason.as_deref()), (Some("Jinrai"), None));
+        assert_eq!((r.winner.as_deref(), r.reason.as_deref()), (Some("jinrai"), None));
     }
 
     #[test]
@@ -655,7 +653,7 @@ mod tests {
         let roster = HashMap::new();
         let evidence = Evidence::new(None, &roster, &[]);
         let r = match_end_round("jinrai", "Team Jinrai wins the match!", &evidence);
-        assert_eq!((r.winner.as_deref(), r.reason.as_deref()), (Some("Jinrai"), None));
+        assert_eq!((r.winner.as_deref(), r.reason.as_deref()), (Some("jinrai"), None));
     }
 
     #[test]

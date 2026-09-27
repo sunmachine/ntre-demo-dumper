@@ -36,7 +36,9 @@ pub struct PlayerSample {
     pub vx: f32,
     pub vy: f32,
     pub vz: f32,
-    pub weapon: String,
+    /// The active weapon's entity name without its `weapon_` prefix; None
+    /// until a weapon is seen, or while the active entity is not a weapon.
+    pub weapon: Option<String>,
     pub health: i64,
     pub team: i64,
     pub class_num: i64,
@@ -187,14 +189,56 @@ struct EntityAnalyser {
 
 const EHANDLE_ENTITY_MASK: i64 = (1 << 11) - 1;
 
-fn weapon_name(class_name: &str) -> String {
-    let stripped = class_name
-        .strip_prefix("CNEO_Weapon")
-        .or_else(|| class_name.strip_prefix("CNEOWeapon"))
-        .or_else(|| class_name.strip_prefix("CWeapon"))
-        .or_else(|| class_name.strip_prefix("C"))
-        .unwrap_or(class_name);
-    stripped.to_ascii_lowercase()
+/// Each server weapon class and its entity name without the `weapon_`
+/// prefix, from every `LINK_ENTITY_TO_CLASS(weapon_...)` in upstream
+/// NeotokyoRebuild/neo at 179061e6. The entity name does not always follow
+/// the class: `weapon_mpn` is class `CWeaponMPN_S`, the silenced MPN, and
+/// `weapon_mpn_unsilenced` is plain `CWeaponMPN` (`weapon_mpns.cpp:21`,
+/// `weapon_mpn.cpp:21`).
+const WEAPON_CLASSES: &[(&str, &str)] = &[
+    ("CWeaponAA13", "aa13"),
+    ("CWeaponBALC", "balc"),
+    ("CWeaponDetpack", "remotedet"),
+    ("CWeaponGhost", "ghost"),
+    ("CWeaponGrenade", "grenade"),
+    ("CWeaponJitte", "jitte"),
+    ("CWeaponJitteS", "jittescoped"),
+    ("CWeaponKnife", "knife"),
+    ("CWeaponKyla", "kyla"),
+    ("CWeaponM41", "m41"),
+    ("CWeaponM41L", "m41l"),
+    ("CWeaponM41S", "m41s"),
+    ("CWeaponMilso", "milso"),
+    ("CWeaponMPN", "mpn_unsilenced"),
+    ("CWeaponMPN_S", "mpn"),
+    ("CWeaponMX", "mx"),
+    ("CWeaponMX_S", "mx_silenced"),
+    ("CWeaponPBK56S", "pbk56s"),
+    ("CWeaponPZ", "pz"),
+    ("CWeaponSMAC", "smac"),
+    ("CWeaponSmokeGrenade", "smokegrenade"),
+    ("CWeaponSRM", "srm"),
+    ("CWeaponSRM_S", "srm_s"),
+    ("CWeaponSRS", "srs"),
+    ("CWeaponSupa7", "supa7"),
+    ("CWeaponTachi", "tachi"),
+    ("CWeaponZR68C", "zr68c"),
+    ("CWeaponZR68L", "zr68l"),
+    ("CWeaponZR68S", "zr68s"),
+];
+
+/// The prefix every NT;RE weapon class carries.
+const WEAPON_CLASS_PREFIX: &str = "CWeapon";
+
+/// The entity name for a weapon class from the demo's own data tables, or
+/// None when the class is not a weapon. A weapon class missing from
+/// `WEAPON_CLASSES`, such as one a later NT;RE build adds, falls back to its
+/// class name without the prefix, lowercased, so it still appears.
+fn weapon_entity_name(class_name: &str) -> Option<String> {
+    if let Some((_, entity)) = WEAPON_CLASSES.iter().find(|(class, _)| *class == class_name) {
+        return Some(entity.to_string());
+    }
+    class_name.strip_prefix(WEAPON_CLASS_PREFIX).map(str::to_ascii_lowercase)
 }
 
 impl EntityAnalyser {
@@ -467,13 +511,12 @@ impl EntityAnalyser {
     fn push_sample(&mut self, tick: u32, entity_id: u32, p: &PlayerState, in_pvs: bool) {
         // entity 0 is worldspawn, i.e. "no weapon handle seen yet"
         let weapon = if p.weapon_entity == 0 {
-            String::new()
+            None
         } else {
             self.entity_classes
                 .get(&p.weapon_entity)
                 .and_then(|id| self.class_names.get(*id as usize))
-                .map(|name| weapon_name(name))
-                .unwrap_or_default()
+                .and_then(|name| weapon_entity_name(name))
         };
         self.samples.push(PlayerSample {
             tick,

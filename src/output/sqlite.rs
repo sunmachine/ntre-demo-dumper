@@ -74,7 +74,8 @@ CREATE TABLE IF NOT EXISTS player_samples (
     x REAL NOT NULL, y REAL NOT NULL, z REAL NOT NULL,  -- player origin (feet)
     eye_pitch REAL NOT NULL, eye_yaw REAL NOT NULL,     -- degrees
     vx REAL NOT NULL, vy REAL NOT NULL, vz REAL NOT NULL,  -- velocity, units/s
-    weapon TEXT NOT NULL,         -- active weapon class; '' until first seen
+    weapon TEXT,                   -- entity name without weapon_ prefix; NULL until a weapon is
+                                    -- seen, or while the active class isn't a weapon at all
     health INTEGER NOT NULL,
     team INTEGER NOT NULL,        -- 0 none, 1 spectator, 2 Jinrai, 3 NSF
     class INTEGER NOT NULL,       -- m_iNeoClass: 0 recon, 1 assault, 2 support, 3 VIP
@@ -154,7 +155,8 @@ CREATE TABLE IF NOT EXISTS kills (
     attacker_userid INTEGER NOT NULL, -- 0 = world / environment
     attacker_name TEXT,
     assists INTEGER NOT NULL,        -- assisting player's userid, 0 = none
-    weapon TEXT NOT NULL,
+    weapon TEXT NOT NULL,             -- entity name without weapon_ prefix; a grenade or
+                                       -- detpack kill's inflictor is mapped to its weapon
     headshot INTEGER NOT NULL,
     suicide INTEGER NOT NULL,
     explosive INTEGER NOT NULL,
@@ -311,7 +313,7 @@ CREATE TABLE IF NOT EXISTS rounds (
     round_number INTEGER,
     start_tick INTEGER,
     end_tick INTEGER,
-    winner TEXT,
+    winner TEXT, -- jinrai, nsf or tie, as round_results.team sends it; NULL if the round never ended
     win_reason TEXT, -- objective, elimination, score, forfeit or tie; NULL when unknown
     capturer_userid INTEGER -- joins players.userid; NULL unless the round was won by a capture
 );

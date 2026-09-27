@@ -23,6 +23,8 @@ so if you add a column, document it.
   counter-clockwise around `z`, `pitch` negative looking up / positive looking
   down, per engine convention.
 - **Booleans** are stored as SQLite `INTEGER` 0/1.
+- **Teams.** Teams are numbered as the game numbers them: 0 none, 1
+  spectator, 2 Jinrai, 3 NSF. Round outcomes use `jinrai`, `nsf` or `tie`.
 - **Tags.** Tables that depend on the demo type carry a tag line:
   - **POV only**: recorded only in first-person demos; empty for SourceTV
     (HLTV) recordings.
@@ -126,7 +128,7 @@ In POV demos, players well out of the recorder's sight produce no rows.
 | `x`, `y`, `z` | world position (player origin, at the feet) |
 | `eye_pitch`, `eye_yaw` | aim direction, degrees |
 | `vx`, `vy`, `vz` | velocity, world units/s |
-| `weapon` | active weapon class, prefix-stripped (empty until a weapon is seen) |
+| `weapon` | weapon's entity name without `weapon_`; see Weapon reference below. NULL until a weapon is seen, or while the active class isn't a weapon |
 | `health` | current HP; NT;RE class maxima are 100 Recon/VIP, 120 Assault, 225 Support (`neo_player_shared.h`). Negative while dead = overkill damage; spectator entities sit at 1 |
 | `team` | 0 unassigned, 1 spectator, 2 Jinrai, 3 NSF |
 | `class` | NT;RE class: 0 recon, 1 assault, 2 support, 3 VIP |
@@ -214,7 +216,7 @@ Kill feed from NT;RE's own `player_death` game event definition.
 | `victim_userid`, `attacker_userid` | join `players.userid`; attacker 0 = world/environment |
 | `victim_name`, `attacker_name` | resolved at parse time; NULL if unknown |
 | `assists` | userid of the assisting player, or 0 for none; joins `players.userid` (NT;RE defines the event field as "user ID who assists") |
-| `weapon` | weapon string from the event, e.g. `weapon_srm` |
+| `weapon` | weapon's entity name without `weapon_`, e.g. `srm`; see Weapon reference below. A grenade or detpack kill's inflictor is mapped to the weapon that made it |
 | `headshot`, `suicide`, `explosive` | kill flags |
 | `ghoster` | 1 if the victim was carrying the ghost |
 
@@ -387,7 +389,7 @@ alive. Otherwise it is NULL.
 |---|---|
 | `round_number` | as announced by the game; NULL if the first start marker was missed. A round restarted after an admin pause repeats its number |
 | `start_tick`, `end_tick` | NULL when the demo started mid-round, or the round never ended (cut off, or aborted by a pause) |
-| `winner` | `Jinrai`, `NSF`, or `Tie`; NULL for a round that never ended |
+| `winner` | `jinrai`, `nsf` or `tie`, as in `round_results.team`; NULL for a round that never ended or whose winner is unknown |
 | `win_reason` | how the round was won, below; NULL when unknown. The full text is in `round_results.message` |
 | `capturer_userid` | the player who carried the ghost into the capture zone; joins `players.userid`. NULL unless the round was won by a capture |
 
@@ -432,12 +434,9 @@ hits that `attacker_hits` never listed.
 
 ## Weapon reference
 
-`player_samples.weapon` is the server weapon class, lowercased with its
-`CWeapon`/`C` prefix stripped: `CWeaponSRM` becomes `srm`, silenced and
-scoped variants keep their suffix (`mpn_s`, `jittes`, `m41s`).
-`kills.weapon` is the string from the `player_death` event: the weapon
-entity name without its `weapon_` prefix (`srm`, `zr68c`, `jittescoped`).
-Grenade kills report the projectile class instead (`neo_grenade_frag`).
+`kills.weapon` and `player_samples.weapon` both hold the weapon's entity
+name without its `weapon_` prefix, as listed below. NULL means the weapon
+is unknown.
 The authoritative lists live in the NT;RE repo:
 [weapon classes](https://github.com/NeotokyoRebuild/neo/tree/master/src/game/shared/neo/weapons)
 and [weapon scripts](https://github.com/NeotokyoRebuild/neo/tree/master/game/neo/scripts)
@@ -460,7 +459,7 @@ Weapons as of August 2026, by entity name:
 | `weapon_srs` | bolt sniper rifle |
 | `weapon_knife` | melee |
 | `weapon_grenade`, `weapon_smokegrenade` | frag / smoke grenades |
-| `weapon_remotedet`, `weapon_proxmine`, `weapon_smac` | detpack, proximity mine, SMAC (NT;RE) |
+| `weapon_remotedet`, `weapon_smac` | detpack, SMAC (NT;RE) |
 | `weapon_ghost` | the ghost (objective) |
 
 The set is open: names added by future NT;RE releases appear as-is.
