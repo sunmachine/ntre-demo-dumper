@@ -17,8 +17,8 @@ demo/       reads the on-disk format; knows nothing about gameplay
 extract/    turns frames into gameplay facts; does no I/O during extraction
    │           mod.rs            FrameExtractor trait + DemoContext
    │           skim.rs           bit-shift ASCII recovery from bit-packed payloads
-   │           announcements.rs  center-text messages (writes announcements + rounds)
-   │           rounds.rs         pure derivation of rounds from announcements
+   │           announcements.rs  center-text messages (writes announcements)
+   │           rounds.rs         rounds from start markers, round results and entity state
    │           pov.rs            recorder position/angles per packet frame
    │           console.rs        recorder console commands
    ▼
@@ -28,7 +28,9 @@ output/     persists facts; all SQL lives here
 
 `main.rs` is CLI definition and wiring only. `pipeline.rs` is the only module
 that touches all three layers: read file → walk frames → run extractors →
-persist. Neither contains parsing or SQL logic.
+persist. Neither contains parsing or SQL logic. Rounds are derived in the
+pipeline after the entity pass, because the ghost capturer comes from
+entity state, and are written in the same transaction as the rest.
 
 ## Layer rules
 
@@ -74,6 +76,16 @@ a parser with TF2-typed events silently misreads NT;RE demos. The
 `extract/net.rs` extractor builds the kill feed, roster, chat, and the
 generic `game_events` table from these messages.
 
+SourceTV relays only the game events that `CHLTVDirector::GetModEvents`
+names, in upstream `src/game/server/hltvdirector.cpp:238-257`. They are
+`hltv_status`, `hltv_chat`, `player_connect`, `player_disconnect`,
+`player_team`, `player_info`, `server_cvar`, `player_death`,
+`player_chat`, `round_start` and `round_end`. NT;RE's own events, such as
+`ghost_capture`, are not in the list, so SourceTV recordings never carry
+them, and the ghost capturer has to come from entity state instead. On the
+2026-09-13 and 2026-09-25 SourceTV recordings, `SELECT DISTINCT name FROM
+game_events` returns only events from the list.
+
 ## Entity layer
 
 `extract/entities.rs` decodes svc_PacketEntities through tf-demo-parser's
@@ -91,6 +103,13 @@ and never runs its unsafe typed-event reader. Player classes are found
 dynamically (server class names ending in "Player"), props are matched by
 name (`m_vecOrigin`, `m_angEyeAngles[0]`, `m_hActiveWeapon`, and others)
 after resolving identifiers from the demo's data tables, and the active
-weapon handle resolves to a class name via per-entity class tracking. A
-mid-file decode error degrades to a warning and keeps all samples decoded so
-far; frame-level extraction is never affected.
+weapon handle resolves to a class name via per-entity class tracking. The
+game rules proxy and the ghost capture zones are found the same way, by
+class names ending in "GameRulesProxy" and "GhostCapturePoint". The proxy's
+`m_iGhosterPlayer` names the ghost carrier, and each zone's `m_bIsActive`
+says whether a capture into it counts. `rounds` reads both at each round
+end. The server sends both entities to every client whatever their
+position (upstream `src/game/shared/gamerules.cpp:102-106` and
+`src/game/shared/neo/neo_ghost_cap_point.cpp:102-105`), so POV recordings
+carry them too. A mid-file decode error degrades to a warning and keeps all
+samples decoded so far; frame-level extraction is never affected.

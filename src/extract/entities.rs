@@ -3,7 +3,9 @@
 //! tf-demo-parser's sendtable machinery. Decoding is definition-driven, so
 //! NT;RE's custom classes and props need no TF2 assumptions (see
 //! ARCHITECTURE.md; the library's typed game events are NOT safe, while its
-//! entity decoding is).
+//! entity decoding is). The pass also records the ghost carrier from the
+//! game rules proxy and whether each capture zone is active, the state
+//! `rounds` uses to name a capturer.
 //!
 //! This is a whole-file pass, not a `FrameExtractor`, because tf-demo-parser
 //! owns its own demo walk. A mid-file decode error degrades to a warning and
@@ -70,11 +72,31 @@ pub struct ResourceSample {
     pub ping: i64,
 }
 
+/// One change of the ghost carrier, from the game rules proxy's
+/// `m_iGhosterPlayer`. The game recomputes it every think from the ghost's
+/// owner (upstream `neo_gamerules.cpp:1482-1496`), so it names the carrier
+/// even while they hold another weapon.
+pub struct CarrierChange {
+    pub tick: u32,
+    /// The carrier's entity slot, or 0 once no one carries the ghost.
+    pub entity_id: u32,
+}
+
+/// One change of a ghost capture zone's `m_bIsActive`.
+pub struct ZoneChange {
+    pub tick: u32,
+    /// The capture zone entity, not a player.
+    pub entity_id: u32,
+    pub active: bool,
+}
+
 pub struct EntityOutput {
     pub samples: Vec<PlayerSample>,
     pub ghost_samples: Vec<GhostSample>,
     pub resource_samples: Vec<ResourceSample>,
     pub damage_samples: Vec<DamageSample>,
+    pub carrier_changes: Vec<CarrierChange>,
+    pub zone_changes: Vec<ZoneChange>,
     pub player_classes: Vec<String>,
     pub warning: Option<String>,
 }
@@ -142,15 +164,25 @@ struct EntityAnalyser {
     ghost_classes: Vec<u16>,
     /// class ids whose name ends with "PlayerResource" (scoreboard arrays)
     resource_classes: Vec<u16>,
+    /// class ids whose name ends with "GameRulesProxy" (ghost carrier)
+    rules_classes: Vec<u16>,
+    /// class ids whose name ends with "GhostCapturePoint" (capture zones)
+    zone_classes: Vec<u16>,
     /// entity id -> class id, tracked from Enter updates (weapon lookups)
     entity_classes: HashMap<u32, u16>,
     players: HashMap<u32, PlayerState>,
     ghosts: HashMap<u32, (f32, f32, f32)>,
     resource: HashMap<u32, ResourceState>,
+    /// last seen carrier entity, 0 for none
+    carrier: u32,
+    /// capture zone entity -> last seen `m_bIsActive`
+    zones: HashMap<u32, bool>,
     samples: Vec<PlayerSample>,
     ghost_samples: Vec<GhostSample>,
     resource_samples: Vec<ResourceSample>,
     damage_samples: Vec<DamageSample>,
+    carrier_changes: Vec<CarrierChange>,
+    zone_changes: Vec<ZoneChange>,
 }
 
 const EHANDLE_ENTITY_MASK: i64 = (1 << 11) - 1;
@@ -191,6 +223,16 @@ impl EntityAnalyser {
 
         if self.resource_classes.contains(&class_id) {
             self.apply_resource(tick, entity, state);
+            return;
+        }
+
+        if self.rules_classes.contains(&class_id) {
+            self.apply_rules(tick, entity, state);
+            return;
+        }
+
+        if self.zone_classes.contains(&class_id) {
+            self.apply_zone(tick, entity_id, entity, state);
             return;
         }
 
@@ -343,6 +385,44 @@ impl EntityAnalyser {
         }
     }
 
+    fn apply_rules(&mut self, tick: u32, entity: &PacketEntity, state: &ParserState) {
+        use tf_demo_parser::demo::message::packetentities::UpdateType;
+        if entity.update_type == UpdateType::Delete {
+            return;
+        }
+        for prop in entity.props(state) {
+            let Some(name) = self.prop_names.get(&prop.identifier) else {
+                continue;
+            };
+            if let ("m_iGhosterPlayer", SendPropValue::Integer(index)) = (name.as_str(), &prop.value) {
+                let entity_id = *index as u32;
+                if entity_id != self.carrier {
+                    self.carrier = entity_id;
+                    self.carrier_changes.push(CarrierChange { tick, entity_id });
+                }
+            }
+        }
+    }
+
+    fn apply_zone(&mut self, tick: u32, entity_id: u32, entity: &PacketEntity, state: &ParserState) {
+        use tf_demo_parser::demo::message::packetentities::UpdateType;
+        if entity.update_type == UpdateType::Delete {
+            self.zones.remove(&entity_id);
+            return;
+        }
+        for prop in entity.props(state) {
+            let Some(name) = self.prop_names.get(&prop.identifier) else {
+                continue;
+            };
+            if let ("m_bIsActive", SendPropValue::Integer(v)) = (name.as_str(), &prop.value) {
+                let active = *v != 0;
+                if self.zones.insert(entity_id, active) != Some(active) {
+                    self.zone_changes.push(ZoneChange { tick, entity_id, active });
+                }
+            }
+        }
+    }
+
     fn apply_resource(&mut self, tick: u32, entity: &PacketEntity, state: &ParserState) {
         use tf_demo_parser::demo::message::packetentities::UpdateType;
         if entity.update_type == UpdateType::Delete {
@@ -464,6 +544,16 @@ impl MessageHandler for EntityAnalyser {
             .filter(|c| c.name.as_str().ends_with("PlayerResource"))
             .map(|c| c.id.into())
             .collect();
+        self.rules_classes = server_classes
+            .iter()
+            .filter(|c| c.name.as_str().ends_with("GameRulesProxy"))
+            .map(|c| c.id.into())
+            .collect();
+        self.zone_classes = server_classes
+            .iter()
+            .filter(|c| c.name.as_str().ends_with("GhostCapturePoint"))
+            .map(|c| c.id.into())
+            .collect();
     }
 
     fn handle_message(&mut self, message: &Message, tick: DemoTick, state: &ParserState) {
@@ -485,6 +575,8 @@ impl MessageHandler for EntityAnalyser {
             ghost_samples: self.ghost_samples,
             resource_samples: self.resource_samples,
             damage_samples: self.damage_samples,
+            carrier_changes: self.carrier_changes,
+            zone_changes: self.zone_changes,
             player_classes: player_class_names,
             warning: None,
         }

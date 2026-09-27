@@ -1,17 +1,17 @@
-//! Center-text announcement recovery, plus the rounds derived from it.
+//! Center-text announcement recovery.
 //!
-//! Collects every packet payload during the frame walk, then (at persist
-//! time) runs the ASCII skim over them in parallel, keeps substrings that
-//! match known announcement patterns, de-duplicates reliable-message
-//! resends, and derives per-round records via `super::rounds`.
+//! Collects every packet payload during the frame walk, then runs the ASCII
+//! skim over them in parallel, keeps substrings that match known
+//! announcement patterns, and de-duplicates reliable-message resends. The
+//! pipeline reads the result for round start markers before `persist`
+//! writes it.
 
 use anyhow::{Context, Result};
 use regex::Regex;
 use std::ops::Range;
 use std::thread;
 
-use super::net::RoundResult;
-use super::{rounds, skim, DemoContext, FrameExtractor, Summary};
+use super::{skim, DemoContext, FrameExtractor, Summary};
 use crate::demo::frames::{Frame, FrameKind};
 use crate::output::sqlite::Db;
 
@@ -47,18 +47,22 @@ pub struct Announcements {
     patterns: Vec<Regex>,
     all_strings: bool,
     packets: Vec<(i32, Range<usize>)>,
-    round_results: Vec<RoundResult>,
+    /// The skim's result, kept so the pipeline and `persist` share one skim.
+    found: Option<Vec<Announcement>>,
 }
 
 impl Announcements {
     pub fn new(patterns: Vec<Regex>, all_strings: bool) -> Self {
-        Self { patterns, all_strings, packets: Vec::new(), round_results: Vec::new() }
+        Self { patterns, all_strings, packets: Vec::new(), found: None }
     }
 
-    /// Hand over the round ends decoded by the net pass; `rounds` prefers
-    /// them over win announcements because they also cover ties.
-    pub fn set_round_results(&mut self, results: Vec<RoundResult>) {
-        self.round_results = results;
+    /// The recovered announcements, in tick order. The skim runs on the
+    /// first call, after the frame walk has collected every packet.
+    pub fn found(&mut self, ctx: &DemoContext) -> &[Announcement] {
+        if self.found.is_none() {
+            self.found = Some(self.skim_all(ctx));
+        }
+        self.found.as_deref().unwrap_or_default()
     }
 
     /// Skim the collected packets across `ctx.threads` workers; results are
@@ -110,14 +114,9 @@ impl FrameExtractor for Announcements {
     }
 
     fn persist(&mut self, db: &Db, demo_id: i64, ctx: &DemoContext) -> Result<Summary> {
-        let announcements = self.skim_all(ctx);
-        let rounds = rounds::derive(&announcements, &self.round_results);
-        db.insert_announcements(demo_id, &announcements, ctx.header.tickrate())?;
-        db.insert_rounds(demo_id, &rounds)?;
-        Ok(vec![
-            ("announcements".into(), announcements.len()),
-            ("rounds".into(), rounds.len()),
-        ])
+        let announcements = self.found(ctx);
+        db.insert_announcements(demo_id, announcements, ctx.header.tickrate())?;
+        Ok(vec![("announcements".into(), announcements.len())])
     }
 }
 
