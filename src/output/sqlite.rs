@@ -1,7 +1,7 @@
 //! SQLite persistence: schema and every insert statement.
 //!
 //! One database can hold many demos; every child row is tagged with the
-//! `demos.id` returned by `insert_demo`. When adding a table for a new
+//! `demos.id` that `insert_demo` stores. When adding a table for a new
 //! extractor, add it to `SCHEMA`, give it an `insert_*` method here, and
 //! document it in SCHEMA.md (a test enforces the last part).
 //!
@@ -14,11 +14,12 @@
 //! refused rather than migrated, so old and new values never mix in one file.
 
 use anyhow::{anyhow, Result};
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use std::path::Path;
 
 use crate::demo::frames::ViewInfo;
 use crate::demo::header::DemoHeader;
+use crate::demo::identity::DemoIdentity;
 use crate::demo::net::ServerInfo;
 use crate::extract::announcements::Announcement;
 use crate::extract::rounds::Round;
@@ -34,7 +35,8 @@ const SCHEMA: &str = r#"
 ---------------------------------------------------------------- reference
 
 CREATE TABLE IF NOT EXISTS demos (
-    id INTEGER PRIMARY KEY,        -- referenced by every table's demo_id
+    id INTEGER PRIMARY KEY,        -- first 44 bits of sha256; the same file gets the same id in every database
+    sha256 TEXT NOT NULL UNIQUE,   -- of the whole file, as sha256sum prints it
     path TEXT NOT NULL,
     parsed_at TEXT NOT NULL DEFAULT (datetime('now')),
     demo_protocol INTEGER NOT NULL,
@@ -388,7 +390,24 @@ impl Db {
         Ok(self.conn.execute_batch("ROLLBACK")?)
     }
 
-    pub fn insert_demo(&self, path: &str, h: &DemoHeader, si: Option<&ServerInfo>) -> Result<i64> {
+    /// The id and stored path of the demo whose file has this hash, if the
+    /// database already holds it.
+    pub fn find_demo(&self, sha256: &str) -> Result<Option<(i64, String)>> {
+        Ok(self
+            .conn
+            .query_row("SELECT id, path FROM demos WHERE sha256 = ?1", [sha256], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .optional()?)
+    }
+
+    pub fn insert_demo(
+        &self,
+        identity: &DemoIdentity,
+        path: &str,
+        h: &DemoHeader,
+        si: Option<&ServerInfo>,
+    ) -> Result<()> {
         let os = si.map(|s| match s.os {
             'l' | 'L' => "linux".to_string(),
             'w' | 'W' => "windows".to_string(),
@@ -400,14 +419,16 @@ impl Db {
         // f32's exact value, 0.014999999664723873.
         let tick_interval = si.map(|s| s.tick_interval.to_string().parse::<f64>().unwrap());
         self.conn.execute(
-            "INSERT INTO demos (path, demo_protocol, network_protocol, server, client, map,
-                                game_directory, playback_seconds, playback_ticks,
-                                playback_frames, tickrate, sourcetv, dedicated, server_os,
-                                host_name, max_clients, tick_interval, map_md5,
-                                recorder_entity_id, parser_version)
+            "INSERT INTO demos (id, sha256, path, demo_protocol, network_protocol, server,
+                                client, map, game_directory, playback_seconds,
+                                playback_ticks, playback_frames, tickrate, sourcetv,
+                                dedicated, server_os, host_name, max_clients,
+                                tick_interval, map_md5, recorder_entity_id, parser_version)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
-                     ?17, ?18, ?19, ?20)",
+                     ?17, ?18, ?19, ?20, ?21, ?22)",
             rusqlite::params![
+                identity.id,
+                identity.sha256,
                 path,
                 h.demo_protocol,
                 h.network_protocol,
@@ -430,7 +451,7 @@ impl Db {
                 env!("CARGO_PKG_VERSION"),
             ],
         )?;
-        Ok(self.conn.last_insert_rowid())
+        Ok(())
     }
 
     pub fn insert_announcements(
@@ -807,7 +828,35 @@ impl Db {
 #[cfg(test)]
 mod tests {
     use super::{Db, SCHEMA, SCHEMA_VERSION};
+    use crate::demo::header::DemoHeader;
+    use crate::demo::identity::DemoIdentity;
     use rusqlite::Connection;
+    use std::path::Path;
+
+    #[test]
+    fn find_demo_returns_what_insert_demo_stored() {
+        let db = Db::open(Path::new(":memory:")).unwrap();
+        let identity = DemoIdentity::of(b"abc");
+        assert_eq!(db.find_demo(&identity.sha256).unwrap(), None);
+
+        let header = DemoHeader {
+            demo_protocol: 3,
+            network_protocol: 24,
+            server_name: String::new(),
+            client_name: String::new(),
+            map_name: String::new(),
+            game_directory: String::new(),
+            playback_seconds: 0.0,
+            playback_ticks: 0,
+            playback_frames: 0,
+            signon_length: 0,
+        };
+        db.insert_demo(&identity, "first.dem", &header, None).unwrap();
+        assert_eq!(
+            db.find_demo(&identity.sha256).unwrap(),
+            Some((identity.id, "first.dem".to_string()))
+        );
+    }
 
     /// A unique path in the system temp dir; there is no tempfile crate here.
     fn temp_db_path(label: &str) -> std::path::PathBuf {
@@ -917,7 +966,9 @@ mod tests {
         };
 
         let db = super::Db::open(std::path::Path::new(":memory:")).unwrap();
-        let demo_id = db.insert_demo("path", &header, Some(&info)).unwrap();
+        let identity = crate::demo::identity::DemoIdentity::of(b"tick interval");
+        db.insert_demo(&identity, "path", &header, Some(&info)).unwrap();
+        let demo_id = identity.id;
         let stored: f64 = db
             .conn
             .query_row("SELECT tick_interval FROM demos WHERE id = ?1", [demo_id], |row| {

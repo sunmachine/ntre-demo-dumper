@@ -105,6 +105,8 @@ ntre-demo-dumper --match 'REGEX' my.dem      # capture extra announcement patter
 ntre-demo-dumper --all-strings my.dem        # exploratory: keep every recovered string
 ```
 
+A demo already in the database is skipped, even under another name.
+
 The tables cover metadata, announcements, rounds, scores, roster, kills,
 pings, chat, game events, and per-tick samples. See [SCHEMA.md](SCHEMA.md)
 for the table list, column semantics, join keys, and example queries;

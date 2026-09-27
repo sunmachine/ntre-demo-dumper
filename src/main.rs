@@ -85,15 +85,23 @@ fn main() -> Result<()> {
     };
     let db = output::sqlite::Db::open(&args.output)?;
     let mut failures = 0usize;
+    let mut skipped = 0usize;
     for demo_path in &args.demos {
-        if let Err(e) = pipeline::parse_one(demo_path, &db, &opts) {
-            let _ = db.rollback(); // parse may have died inside its transaction
-            pipeline::print_logs(&[(
-                pipeline::LogLevel::Error,
-                format!("{}: {e:#}", demo_path.display()),
-            )]);
-            failures += 1;
+        match pipeline::parse_one(demo_path, &db, &opts) {
+            Ok(pipeline::Outcome::Parsed) => {}
+            Ok(pipeline::Outcome::Skipped) => skipped += 1,
+            Err(e) => {
+                let _ = db.rollback(); // parse may have died inside its transaction
+                pipeline::print_logs(&[(
+                    pipeline::LogLevel::Error,
+                    format!("{}: {e:#}", demo_path.display()),
+                )]);
+                failures += 1;
+            }
         }
+    }
+    if skipped > 0 {
+        println!("  {skipped} demo(s) skipped, already in the database");
     }
     if failures > 0 {
         anyhow::bail!("{failures} demo(s) failed to parse");

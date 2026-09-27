@@ -7,6 +7,7 @@ Data flows one direction through three layers, orchestrated by `pipeline.rs`:
    │
    ▼
 demo/       reads the on-disk format; knows nothing about gameplay
+   │           identity.rs      SHA-256 of the file and the demo id taken from it
    │           header.rs        fixed 1072-byte HL2DEMO header (map, server, ticks)
    │           frames.rs        frame iterator: command, tick, payload, recorder POV
    │           bits.rs          LSB-first bit reader (Source bf_read semantics)
