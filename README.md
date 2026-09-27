@@ -27,8 +27,8 @@ The crate/binary is named `ntre-demo-dumper`.
   same engine branch as TF2).
 - **Announcements:** round starts, round winners, ghost captures, with tick and
   wall-clock timestamps.
-- **Rounds:** start/end tick, winner (including ties), and win reason per
-  round, from the game's own round-end message.
+- **Rounds:** start and end tick, winner (including ties), win reason,
+  and who captured the ghost.
 - **Recorder POV:** position and view angles every packet frame (~66/s), ready
   for heatmaps of the recording player.
 - **Recorder inputs:** per-tick buttons (fire, jump, duck, reload, sprint, and
@@ -45,9 +45,9 @@ The crate/binary is named `ntre-demo-dumper`.
 - **Player roster:** name, userid, SteamID, bot flag, from the string-table
   dump at recording start plus connect events for late joiners.
 - **Chat:** SayText2 user messages.
-- **All game events:** every event in the demo (ghost captures, rank changes,
-  round transitions), decoded generically against the demo's own event
-  definitions and stored with fields as JSON (query with SQLite's `json_extract`).
+- **All game events:** every event the recording carries, decoded against
+  the demo's own event definitions and stored with fields as JSON (query
+  with SQLite's `json_extract`).
 - **All-player entity samples:** position, eye angles, active weapon, health,
   team, and life state for every player, on change (~66/s while moving),
   decoded from delta-compressed entity updates via the demo's own sendtables.

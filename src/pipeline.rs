@@ -12,7 +12,8 @@ use std::time::Instant;
 use crate::demo::frames::FrameIter;
 use crate::demo::header::{DemoHeader, HEADER_SIZE};
 use crate::extract::{
-    announcements, console, entities, inferred_hits, inputs, net, pov, DemoContext, FrameExtractor,
+    announcements, console, entities, inferred_hits, inputs, net, pov, rounds, DemoContext,
+    FrameExtractor,
 };
 use crate::output::sqlite::Db;
 
@@ -107,11 +108,14 @@ pub fn parse_one(path: &Path, db: &Db, opts: &Options) -> Result<()> {
     };
 
     drop(extractors);
-    announcements.set_round_results(net.round_results.clone());
     let hits = entity_output
         .as_ref()
         .map(|output| inferred_hits::infer(&output.samples, &net.kills, &net.players))
         .unwrap_or_default();
+    // Rounds take start markers from the announcements, ends from the net
+    // pass, and the capturer from entity state, so they wait for all three.
+    let evidence = rounds::Evidence::new(entity_output.as_ref(), &net.players);
+    let rounds = rounds::derive(announcements.found(&ctx), &net.round_results, &evidence);
     let mut extractors: Vec<&mut dyn FrameExtractor> =
         vec![&mut announcements, &mut pov, &mut console, &mut inputs, &mut net];
 
@@ -121,6 +125,8 @@ pub fn parse_one(path: &Path, db: &Db, opts: &Options) -> Result<()> {
     for extractor in &mut extractors {
         summary.extend(extractor.persist(db, demo_id, &ctx)?);
     }
+    db.insert_rounds(demo_id, &rounds)?;
+    summary.push(("rounds".into(), rounds.len()));
     if let Some(output) = &entity_output {
         db.insert_player_samples(demo_id, &output.samples)?;
         db.insert_ghost_samples(demo_id, &output.ghost_samples)?;

@@ -69,7 +69,7 @@ rows are recomputed on every parse and may change when a rule improves.
 | `console_cmds` | event log | POV only | none (the recorder) |
 | `game_events` | event log | | varies (JSON fields) |
 | `announcements` | derived | | none |
-| `rounds` | derived | | none |
+| `rounds` | derived | | `userid` |
 | `inferred_hits` | inferred | | `entity_id` |
 
 ## Reference tables
@@ -141,6 +141,7 @@ In POV demos, players well out of the recorder's sight produce no rows.
 The ghost entity's own position over time (on-change). Reliable while the
 ghost is dropped or in the world; while a player carries it, track the
 carrier instead via `player_samples` rows with `weapon = 'ghost'`. The
+carrier can holster the ghost, so a carrier may show another weapon. The
 `entity_id` is the ghost entity, not a player. Columns: `tick`, `entity_id`,
 `x`, `y`, `z`.
 
@@ -333,22 +334,23 @@ Console commands issued by the recorder during the recording. Columns:
 
 ### `game_events`
 
-Every game event in the demo, decoded generically against the demo's own
-event definitions, so NT;RE-specific events are included (`ghost_capture`,
-`player_rankchange`, `vip_death`, and others). This is the escape hatch:
-anything not promoted to its own table is queryable here.
+Every game event the recording carries, decoded against the demo's own
+event definitions. SourceTV recordings carry only a few types, such as
+`player_death` and `round_start`. Events such as `ghost_capture` appear
+only in POV recordings; for captures in any recording, use
+`rounds.capturer_userid`.
 
 | column | meaning |
 |---|---|
 | `tick` | event time |
-| `name` | event name, e.g. `player_death`, `ghost_capture` |
+| `name` | event name, e.g. `player_death`, `round_start` |
 | `fields` | event fields as a JSON object |
 
 Query fields with SQLite's JSON functions:
 
 ```sql
-SELECT tick, json_extract(fields, '$.userid') AS userid
-FROM game_events WHERE demo_id = 1 AND name = 'ghost_capture';
+SELECT tick, json_extract(fields, '$.userid') AS victim_userid
+FROM game_events WHERE demo_id = 1 AND name = 'player_death';
 
 SELECT DISTINCT name FROM game_events WHERE demo_id = 1;  -- what's in this demo?
 ```
@@ -369,7 +371,8 @@ One row per round: the `ROUND N STARTED` announcement supplies the number
 and start tick, and `round_results` supplies the end tick and outcome. A
 demo without `RoundResult` messages falls back to `Team X wins ...`
 announcements for its ends, which cannot see ties. `round_starts` holds
-the wire-fact start events.
+the wire-fact start events. The capturer comes from the capture zones and
+the ghost carrier in the entity data.
 
 | column | meaning |
 |---|---|
@@ -377,6 +380,7 @@ the wire-fact start events.
 | `start_tick`, `end_tick` | NULL when the demo started mid-round, or the round never ended (cut off, or aborted by a pause) |
 | `winner` | `Jinrai`, `NSF`, or `Tie`; NULL for a round that never ended |
 | `win_reason` | how the round was won, below; NULL when unknown. The full text is in `round_results.message` |
+| `capturer_userid` | the player who carried the ghost into the capture zone; joins `players.userid`. NULL unless the round was won by a capture |
 
 | `win_reason` | meaning |
 |---|---|

@@ -303,7 +303,8 @@ CREATE TABLE IF NOT EXISTS announcements (
 );
 
 -- Rounds derived from start announcements and round_results (or win
--- announcements when a demo has no RoundResult messages).
+-- announcements when a demo has no RoundResult messages), with the ghost
+-- capturer taken from entity state.
 CREATE TABLE IF NOT EXISTS rounds (
     id INTEGER PRIMARY KEY,
     demo_id INTEGER NOT NULL REFERENCES demos(id),
@@ -311,7 +312,8 @@ CREATE TABLE IF NOT EXISTS rounds (
     start_tick INTEGER,
     end_tick INTEGER,
     winner TEXT,
-    win_reason TEXT -- objective, elimination, score, forfeit or tie; NULL when unknown
+    win_reason TEXT, -- objective, elimination, score, forfeit or tie; NULL when unknown
+    capturer_userid INTEGER -- joins players.userid; NULL unless the round was won by a capture
 );
 
 CREATE INDEX IF NOT EXISTS idx_player_samples_demo_tick ON player_samples(demo_id, tick);
@@ -403,12 +405,13 @@ impl Db {
 
     pub fn insert_rounds(&self, demo_id: i64, rounds: &[Round]) -> Result<()> {
         let mut ins = self.conn.prepare(
-            "INSERT INTO rounds (demo_id, round_number, start_tick, end_tick, winner, win_reason)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO rounds (demo_id, round_number, start_tick, end_tick, winner, win_reason,
+                                 capturer_userid)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         )?;
         for r in rounds {
             ins.execute(rusqlite::params![
-                demo_id, r.number, r.start_tick, r.end_tick, r.winner, r.reason
+                demo_id, r.number, r.start_tick, r.end_tick, r.winner, r.reason, r.capturer_userid
             ])?;
         }
         Ok(())
