@@ -191,7 +191,7 @@ CREATE TABLE IF NOT EXISTS attacker_hits (
     accumulator REAL NOT NULL            -- fractional carry; 0 = respawn reset
 );
 
--- In-game location pings (player_ping game events).
+-- In-game location pings (player_ping game events). POV demos only.
 CREATE TABLE IF NOT EXISTS player_pings (
     id INTEGER PRIMARY KEY,
     demo_id INTEGER NOT NULL REFERENCES demos(id),
@@ -199,22 +199,22 @@ CREATE TABLE IF NOT EXISTS player_pings (
     userid INTEGER NOT NULL,      -- pinging player; joins players.userid
     team INTEGER NOT NULL,        -- pinging player's team
     x INTEGER NOT NULL, y INTEGER NOT NULL, z INTEGER NOT NULL,  -- pinged position
-    ghoster_ping INTEGER NOT NULL -- the event's ghosterping flag
+    ghoster_ping INTEGER NOT NULL -- 1 if the pinger carried the ghost or was the VIP
 );
 
--- Automatic enemy-position callouts while the ghost is held
--- (ghost_enemy_callout game events).
+-- Enemy positions called out by a bot carrying the ghost
+-- (ghost_enemy_callout game events). POV demos only.
 CREATE TABLE IF NOT EXISTS ghost_callouts (
     id INTEGER PRIMARY KEY,
     demo_id INTEGER NOT NULL REFERENCES demos(id),
     tick INTEGER NOT NULL,
-    userid INTEGER NOT NULL,        -- ghost carrier; joins players.userid
-    team INTEGER NOT NULL,          -- carrier's team
-    target_userid INTEGER NOT NULL, -- spotted enemy; joins players.userid
+    userid INTEGER NOT NULL,           -- ghost carrier; joins players.userid
+    team INTEGER NOT NULL,             -- carrier's team
+    target_entity_id INTEGER NOT NULL, -- spotted enemy; joins players.entity_id
     x INTEGER NOT NULL, y INTEGER NOT NULL, z INTEGER NOT NULL  -- spotted position
 );
 
--- Cumulative team score updates (team_score game events).
+-- Cumulative team score updates (team_score game events). POV demos only.
 CREATE TABLE IF NOT EXISTS team_scores (
     id INTEGER PRIMARY KEY,
     demo_id INTEGER NOT NULL REFERENCES demos(id),
@@ -234,7 +234,7 @@ CREATE TABLE IF NOT EXISTS team_changes (
     disconnect INTEGER NOT NULL  -- 1 when the change is a disconnect
 );
 
--- Rank progression (player_rankchange game events).
+-- Rank progression (player_rankchange game events). POV demos only.
 CREATE TABLE IF NOT EXISTS rank_changes (
     id INTEGER PRIMARY KEY,
     demo_id INTEGER NOT NULL REFERENCES demos(id),
@@ -594,12 +594,12 @@ impl Db {
         callouts: &[crate::extract::net::GhostCallout],
     ) -> Result<()> {
         let mut ins = self.conn.prepare(
-            "INSERT INTO ghost_callouts (demo_id, tick, userid, team, target_userid, x, y, z)
+            "INSERT INTO ghost_callouts (demo_id, tick, userid, team, target_entity_id, x, y, z)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         )?;
         for c in callouts {
             ins.execute(rusqlite::params![
-                demo_id, c.tick, c.userid, c.team, c.target_userid, c.x, c.y, c.z,
+                demo_id, c.tick, c.userid, c.team, c.target_entity_id, c.x, c.y, c.z,
             ])?;
         }
         Ok(())

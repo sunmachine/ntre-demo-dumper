@@ -94,6 +94,16 @@ them, and the ghost capturer has to come from entity state instead. On the
 2026-09-13 and 2026-09-25 SourceTV recordings, `SELECT DISTINCT name FROM
 game_events` returns only events from the list.
 
+NT;RE's client listens for `player_ping`, `ghost_enemy_callout`,
+`team_score` and `player_rankchange` (upstream
+`src/game/client/neo/ui/neo_hud_player_ping.cpp:102`,
+`src/game/client/neo/ui/neo_hud_compass.cpp:66`,
+`src/game/client/neo/game_controls/neo_teammenu.cpp:113`,
+`src/game/client/neo/ui/neo_hud_deathnotice.cpp:169`), so POV recordings
+carry them and the tables built from them are POV only. The server fires
+`ghost_enemy_callout` only from the bot behaviour for a ghost carrier
+(`src/game/server/neo/bot/behavior/neo_bot_ctg_carrier.cpp:100`).
+
 When a round ends the match or leads into sudden death, `SetWinningTeam`
 substitutes "Team X wins the match!", "The match is tied!" or "Next round:
 Sudden death!" for the round's own reason text, but the `RoundResult`
