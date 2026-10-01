@@ -129,7 +129,7 @@ latest name.
 | column | meaning |
 |---|---|
 | `entity_id` | entity slot; joins `player_samples.entity_id` and `chat.client_entity` |
-| `userid` | connection id, see Shared conventions; joins the `userid` columns of event tables and the `userid` fields in `game_events` |
+| `userid` | connection id, see Shared conventions; unique within a demo, which an index enforces; joins the `userid` columns of event tables and the `userid` fields in `game_events` |
 | `name` | player name (latest, if they renamed) |
 | `steamid` | e.g. `[U:1:12345678]`, or `BOT` for every bot; joins the `steamid` columns of event tables |
 | `is_bot` | 1 for server bots |

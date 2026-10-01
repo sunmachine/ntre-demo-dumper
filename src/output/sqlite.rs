@@ -362,6 +362,7 @@ CREATE INDEX IF NOT EXISTS idx_kills_demo_tick ON kills(demo_id, tick);
 CREATE INDEX IF NOT EXISTS idx_announcements_demo_tick ON announcements(demo_id, tick);
 CREATE INDEX IF NOT EXISTS idx_pov_demo_tick ON pov_samples(demo_id, tick);
 CREATE INDEX IF NOT EXISTS idx_inputs_demo_tick ON recorder_inputs(demo_id, tick);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_players_demo_userid ON players(demo_id, userid);
 "#;
 
 impl Db {
