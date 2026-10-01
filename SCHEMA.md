@@ -262,6 +262,17 @@ Kill feed from NT;RE's own `player_death` game event definition.
 | `headshot`, `suicide`, `explosive` | kill flags |
 | `ghoster` | 1 if the victim was carrying the ghost |
 
+A world kill is a death no player caused. Its `attacker_userid` is 0 and
+its `attacker_name` is NULL. The game then puts the class name of whatever
+dealt the damage in `weapon` (upstream
+`src/game/shared/neo/neo_gamerules.cpp:4367`). `trigger_hurt` is a damage
+zone the map author placed, such as a pit or an out-of-bounds area.
+`worldspawn` is the map itself, as in a fatal fall. `suicide` is 1 on
+every world kill, because the game sets it whenever the killer is not a
+player (`:4413`). `headshot` reports the last body part hit before the
+death (`:4412`), so on a world kill it describes an earlier hit and not the
+death.
+
 ### `attacker_hits`
 
 **Tags: SourceTV only, pre-July-2026 builds**
