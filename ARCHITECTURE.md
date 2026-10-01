@@ -94,6 +94,17 @@ them, and the ghost capturer has to come from entity state instead. On the
 2026-09-13 and 2026-09-25 SourceTV recordings, `SELECT DISTINCT name FROM
 game_events` returns only events from the list.
 
+`player_connect` is on that list, yet no SourceTV recording carries one.
+Across nine SourceTV recordings dated 2026-03-19 to 2026-09-25, `SELECT
+count(*) FROM game_events WHERE name LIKE 'player_connect%'` returns 0,
+while `player_disconnect` rows exist. A
+player who joins after recording began is therefore named only by the
+`userinfo` string table. The server sends each new or changed entry as an
+svc_UpdateStringTable, whose table number is the table's position among the
+signon's svc_CreateStringTable messages. `demo/stringtables.rs` decodes
+those updates, and the roster takes late joiners from them in both
+recording types.
+
 NT;RE's client listens for `player_ping`, `ghost_enemy_callout`,
 `team_score` and `player_rankchange` (upstream
 `src/game/client/neo/ui/neo_hud_player_ping.cpp:102`,

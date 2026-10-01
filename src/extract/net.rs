@@ -12,7 +12,7 @@ use crate::demo::frames::{Frame, FrameKind};
 use crate::demo::net::{
     parse_game_event, walk_packet, EventDefs, EventValue, NetMessage, ServerInfo,
 };
-use crate::demo::stringtables::parse_userinfo;
+use crate::demo::stringtables::{parse_userinfo, parse_userinfo_update, PlayerInfo};
 use crate::output::sqlite::Db;
 
 pub struct Kill {
@@ -128,6 +128,11 @@ pub struct NetPass {
     /// The first svc_ServerInfo; `None` if the signon never carried one.
     pub server_info: Option<ServerInfo>,
     pub cvars: Vec<ServerCvar>,
+    /// How many svc_CreateStringTable messages have been seen, which is the
+    /// number the next table gets.
+    tables_created: u8,
+    /// The userinfo table's number and entry limit, once it is created.
+    userinfo_table: Option<(u8, u16)>,
     warnings: usize,
 }
 
@@ -362,6 +367,25 @@ impl NetPass {
         }
     }
 
+    /// Add userinfo entries to the roster. A userid already in the roster
+    /// keeps its row, because the table repeats a player's entry whenever
+    /// any part of it changes.
+    fn on_userinfo(&mut self, tick: i32, players: Vec<PlayerInfo>) {
+        for p in players {
+            if p.is_hltv {
+                continue;
+            }
+            self.players.entry(p.user_id).or_insert_with(|| Player {
+                entity_id: p.entity_id,
+                user_id: p.user_id,
+                name: p.name,
+                steam_id: p.steam_id,
+                is_bot: p.is_fake_player,
+                first_seen_tick: tick,
+            });
+        }
+    }
+
     /// SourceTV appends its own `tv_transmitall` to the server's list, so a
     /// name can repeat within one message; the last value wins.
     fn on_set_convar(&mut self, tick: i32, pairs: Vec<(String, String)>) {
@@ -413,13 +437,13 @@ impl FrameExtractor for NetPass {
                 }
                 // Signon frames carry the server's uptime tick; the snapshot
                 // they hold is the state at the start of the recording.
-                let cvar_tick = if frame.kind == FrameKind::Signon { 0 } else { tick };
+                let state_tick = if frame.kind == FrameKind::Signon { 0 } else { tick };
                 for msg in collected {
                     match msg {
                         NetMessage::ServerInfo(info) => {
                             self.server_info.get_or_insert(info);
                         }
-                        NetMessage::SetConVar(pairs) => self.on_set_convar(cvar_tick, pairs),
+                        NetMessage::SetConVar(pairs) => self.on_set_convar(state_tick, pairs),
                         NetMessage::GameEventList(defs) => self.defs = defs,
                         NetMessage::GameEvent(chunk) => {
                             match parse_game_event(&chunk, &self.defs) {
@@ -433,6 +457,23 @@ impl FrameExtractor for NetPass {
                         NetMessage::UserMessage { kind, data } => {
                             self.on_user_message(tick, kind, &data);
                         }
+                        NetMessage::CreateStringTable { name, max_entries } => {
+                            if name == "userinfo" {
+                                self.userinfo_table = Some((self.tables_created, max_entries));
+                            }
+                            self.tables_created += 1;
+                        }
+                        NetMessage::UpdateStringTable { table_id, changed, data } => {
+                            let Some((_, max_entries)) =
+                                self.userinfo_table.filter(|(id, _)| *id == table_id)
+                            else {
+                                continue;
+                            };
+                            match parse_userinfo_update(&data, max_entries, changed) {
+                                Ok(players) => self.on_userinfo(state_tick, players),
+                                Err(_) => self.warnings += 1,
+                            }
+                        }
                     }
                 }
             }
@@ -441,19 +482,7 @@ impl FrameExtractor for NetPass {
                 // not a recording-relative one, so a roster player is
                 // "first seen" at tick 0: the start of the recording.
                 if let Ok(players) = parse_userinfo(frame.payload_in(ctx.data)) {
-                    for p in players {
-                        if p.is_hltv {
-                            continue;
-                        }
-                        self.players.entry(p.user_id).or_insert_with(|| Player {
-                            entity_id: p.entity_id,
-                            user_id: p.user_id,
-                            name: p.name,
-                            steam_id: p.steam_id,
-                            is_bot: p.is_fake_player,
-                            first_seen_tick: 0,
-                        });
-                    }
+                    self.on_userinfo(0, players);
                 }
             }
             _ => {}

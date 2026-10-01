@@ -70,6 +70,13 @@ pub enum NetMessage {
     /// Raw event payload (starts with the 9-bit event type id).
     GameEvent(BitChunk),
     UserMessage { kind: u8, data: BitChunk },
+    /// svc_CreateStringTable, header only. The server numbers its tables in
+    /// creation order, and svc_UpdateStringTable names a table by that
+    /// number.
+    CreateStringTable { name: String, max_entries: u16 },
+    /// svc_UpdateStringTable: the table's number, how many entries changed,
+    /// and the entries still bit-packed.
+    UpdateStringTable { table_id: u8, changed: u16, data: BitChunk },
 }
 
 /// Walk every net message in a packet payload, invoking `sink` for the
@@ -134,7 +141,7 @@ pub fn walk_packet(
             }
             12 => {
                 // svc_CreateStringTable: header + skippable data
-                r.read_string()?; // table name
+                let name = r.read_string()?;
                 let max_entries = r.read_bits(16)? as u16;
                 r.read_bits(log_base2(max_entries) + 1)?; // entry count
                 let length = if protocol > 23 { r.read_var_int()? } else { r.read_bits(20)? };
@@ -143,15 +150,15 @@ pub fn walk_packet(
                 }
                 r.read_bit()?; // compressed
                 r.skip_bits(length as usize)?;
+                sink(NetMessage::CreateStringTable { name, max_entries });
             }
             13 => {
                 // svc_UpdateStringTable
-                r.read_bits(5)?; // table id
-                if r.read_bit()? {
-                    r.read_bits(16)?; // changed entry count
-                }
-                let length = r.read_bits(20)?;
-                r.skip_bits(length as usize)?;
+                let table_id = r.read_bits(5)? as u8;
+                let changed = if r.read_bit()? { r.read_bits(16)? as u16 } else { 1 };
+                let length = r.read_bits(20)? as usize;
+                let data = r.read_chunk(length)?;
+                sink(NetMessage::UpdateStringTable { table_id, changed, data });
             }
             14 => {
                 // svc_VoiceInit
@@ -519,6 +526,43 @@ mod tests {
         let cvars = cvars.expect("convars");
         assert_eq!(cvars[0], ("sv_neo_comp_name".into(), "ads26".into()));
         assert_eq!(cvars.len(), 2);
+    }
+
+    /// A string table's creation header and a later update are both
+    /// surfaced, and the reader stays aligned on the message after each.
+    #[test]
+    fn surfaces_string_table_create_and_update() {
+        let mut w = BitWriter::default();
+        w.write_bits(12, 6); // svc_CreateStringTable
+        w.write_string("userinfo");
+        w.write_bits(256, 16); // max entries
+        w.write_bits(0, 9); // entry count, log2(256) + 1 bits
+        w.write_bits(0, 8); // data length as a varint
+        w.write_bit(false); // no fixed userdata size
+        w.write_bit(false); // not compressed
+        w.write_bits(13, 6); // svc_UpdateStringTable
+        w.write_bits(2, 5); // table id
+        w.write_bit(true);
+        w.write_bits(3, 16); // changed entries
+        w.write_bits(12, 20); // data length in bits
+        w.write_bits(0xabc, 12);
+        w.write_bits(18, 6); // svc_SetView follows, to prove alignment
+        w.write_bits(1, 11);
+
+        let mut created = None;
+        let mut updated = None;
+        walk_packet(&w.bytes, 24, &mut |msg| match msg {
+            NetMessage::CreateStringTable { name, max_entries } => created = Some((name, max_entries)),
+            NetMessage::UpdateStringTable { table_id, changed, data } => {
+                updated = Some((table_id, changed, data))
+            }
+            _ => {}
+        })
+        .unwrap();
+        assert_eq!(created, Some(("userinfo".to_string(), 256)));
+        let (table_id, changed, data) = updated.expect("update");
+        assert_eq!((table_id, changed, data.bit_len), (2, 3, 12));
+        assert_eq!(data.reader().read_bits(12).unwrap(), 0xabc);
     }
 
     /// Skippable messages must consume exactly their wire size.
