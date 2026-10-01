@@ -286,6 +286,12 @@ fn kill_weapon(weapon: String) -> String {
 }
 
 impl NetPass {
+    /// The Steam ID of the player holding `userid`, or `None` for a userid
+    /// the roster never saw, which includes the world's userid 0.
+    pub fn steamid_of(&self, userid: u32) -> Option<String> {
+        self.players.get(&userid).map(|p| p.steam_id.clone())
+    }
+
     fn on_game_event(&mut self, tick: i32, name: &str, fields: &[(String, EventValue)]) {
         match name {
             "player_death" => self.kills.push(Kill {
@@ -496,12 +502,13 @@ impl FrameExtractor for NetPass {
         let name_of = |userid: u32| -> Option<String> {
             self.players.get(&userid).map(|p| p.name.clone())
         };
-        db.insert_kills(demo_id, &self.kills, &name_of)?;
-        db.insert_player_pings(demo_id, &self.pings)?;
-        db.insert_ghost_callouts(demo_id, &self.callouts)?;
+        let steamid_of = |userid: u32| self.steamid_of(userid);
+        db.insert_kills(demo_id, &self.kills, &name_of, &steamid_of)?;
+        db.insert_player_pings(demo_id, &self.pings, &steamid_of)?;
+        db.insert_ghost_callouts(demo_id, &self.callouts, &steamid_of)?;
         db.insert_team_scores(demo_id, &self.team_scores)?;
-        db.insert_team_changes(demo_id, &self.team_changes)?;
-        db.insert_rank_changes(demo_id, &self.rank_changes)?;
+        db.insert_team_changes(demo_id, &self.team_changes, &steamid_of)?;
+        db.insert_rank_changes(demo_id, &self.rank_changes, &steamid_of)?;
         db.insert_round_starts(demo_id, &self.round_starts)?;
         db.insert_round_results(demo_id, &self.round_results)?;
         db.insert_chat(demo_id, &self.chat)?;

@@ -115,6 +115,15 @@ carry them and the tables built from them are POV only. The server fires
 `ghost_enemy_callout` only from the bot behaviour for a ghost carrier
 (`src/game/server/neo/bot/behavior/neo_bot_ctg_carrier.cpp:100`).
 
+Game events name players by userid, which the engine documents as "local
+server user ID, unique while server is running" (upstream
+`src/public/cdll_int.h:95`). It is a per-connection counter. On three
+2026-03-19 SourceTV recordings of one server, taken on consecutive maps,
+11 of 13 Steam IDs keep one userid throughout, and the two players who
+rejoined come back with a higher one: `SELECT steamid,
+group_concat(DISTINCT userid) FROM players GROUP BY steamid`. The event
+tables therefore store the roster's Steam ID beside each userid.
+
 When a round ends the match or leads into sudden death, `SetWinningTeam`
 substitutes "Team X wins the match!", "The match is tied!" or "Next round:
 Sudden death!" for the round's own reason text, but the `RoundResult`

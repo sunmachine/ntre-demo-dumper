@@ -24,8 +24,14 @@ use crate::demo::net::ServerInfo;
 use crate::extract::announcements::Announcement;
 use crate::extract::rounds::Round;
 
+/// Looks a userid up in the demo's roster and returns that player's Steam
+/// ID. The event tables store it beside the userid because a userid names
+/// one connection to one server, while a Steam ID names the same person in
+/// every demo.
+pub type SteamIdOf<'a> = &'a dyn Fn(u32) -> Option<String>;
+
 /// Stored as `PRAGMA user_version`; see the module comment for when to raise it.
-const SCHEMA_VERSION: i32 = 1;
+const SCHEMA_VERSION: i32 = 2;
 
 pub struct Db {
     conn: Connection,
@@ -163,11 +169,14 @@ CREATE TABLE IF NOT EXISTS kills (
     id INTEGER PRIMARY KEY,
     demo_id INTEGER NOT NULL REFERENCES demos(id),
     tick INTEGER NOT NULL,
-    victim_userid INTEGER NOT NULL,   -- joins players.userid
+    victim_steamid TEXT,              -- joins players.steamid; NULL if not in the roster
+    victim_userid INTEGER NOT NULL,   -- connection id; joins players.userid
     victim_name TEXT,                 -- resolved at parse time; NULL if unknown
+    attacker_steamid TEXT,            -- NULL for a world kill
     attacker_userid INTEGER NOT NULL, -- 0 = world / environment
     attacker_name TEXT,
-    assists INTEGER NOT NULL,        -- assisting player's userid, 0 = none
+    assister_steamid TEXT,            -- NULL when nobody assisted
+    assists INTEGER NOT NULL,         -- assisting player's userid, 0 = none
     weapon TEXT NOT NULL,             -- entity name without weapon_ prefix; a grenade or
                                        -- detpack kill's inflictor is mapped to its weapon
     headshot INTEGER NOT NULL,
@@ -196,7 +205,8 @@ CREATE TABLE IF NOT EXISTS player_pings (
     id INTEGER PRIMARY KEY,
     demo_id INTEGER NOT NULL REFERENCES demos(id),
     tick INTEGER NOT NULL,
-    userid INTEGER NOT NULL,      -- pinging player; joins players.userid
+    steamid TEXT,                 -- pinging player; joins players.steamid
+    userid INTEGER NOT NULL,      -- pinging player's connection id; joins players.userid
     team INTEGER NOT NULL,        -- pinging player's team
     x INTEGER NOT NULL, y INTEGER NOT NULL, z INTEGER NOT NULL,  -- pinged position
     ghoster_ping INTEGER NOT NULL -- 1 if the pinger carried the ghost or was the VIP
@@ -208,6 +218,7 @@ CREATE TABLE IF NOT EXISTS ghost_callouts (
     id INTEGER PRIMARY KEY,
     demo_id INTEGER NOT NULL REFERENCES demos(id),
     tick INTEGER NOT NULL,
+    steamid TEXT,                      -- ghost carrier; BOT, since only bots call out
     userid INTEGER NOT NULL,           -- ghost carrier; joins players.userid
     team INTEGER NOT NULL,             -- carrier's team
     target_entity_id INTEGER NOT NULL, -- spotted enemy; joins players.entity_id
@@ -228,7 +239,8 @@ CREATE TABLE IF NOT EXISTS team_changes (
     id INTEGER PRIMARY KEY,
     demo_id INTEGER NOT NULL REFERENCES demos(id),
     tick INTEGER NOT NULL,
-    userid INTEGER NOT NULL,     -- joins players.userid
+    steamid TEXT,                -- joins players.steamid
+    userid INTEGER NOT NULL,     -- connection id; joins players.userid
     team INTEGER NOT NULL,       -- new team
     old_team INTEGER NOT NULL,
     disconnect INTEGER NOT NULL  -- 1 when the change is a disconnect
@@ -239,7 +251,8 @@ CREATE TABLE IF NOT EXISTS rank_changes (
     id INTEGER PRIMARY KEY,
     demo_id INTEGER NOT NULL REFERENCES demos(id),
     tick INTEGER NOT NULL,
-    userid INTEGER NOT NULL,  -- joins players.userid
+    steamid TEXT,             -- joins players.steamid
+    userid INTEGER NOT NULL,  -- connection id; joins players.userid
     old_rank INTEGER NOT NULL,
     new_rank INTEGER NOT NULL
 );
@@ -338,7 +351,8 @@ CREATE TABLE IF NOT EXISTS rounds (
     end_tick INTEGER,
     winner TEXT, -- jinrai, nsf or tie, as round_results.team sends it; NULL if the round never ended
     win_reason TEXT, -- objective, elimination, score, forfeit or tie; NULL when unknown
-    capturer_userid INTEGER -- joins players.userid; NULL unless the round was won by a capture
+    capturer_steamid TEXT,  -- joins players.steamid; NULL unless the round was won by a capture
+    capturer_userid INTEGER -- connection id; joins players.userid
 );
 
 CREATE INDEX IF NOT EXISTS idx_player_samples_demo_tick ON player_samples(demo_id, tick);
@@ -348,6 +362,7 @@ CREATE INDEX IF NOT EXISTS idx_kills_demo_tick ON kills(demo_id, tick);
 CREATE INDEX IF NOT EXISTS idx_announcements_demo_tick ON announcements(demo_id, tick);
 CREATE INDEX IF NOT EXISTS idx_pov_demo_tick ON pov_samples(demo_id, tick);
 CREATE INDEX IF NOT EXISTS idx_inputs_demo_tick ON recorder_inputs(demo_id, tick);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_players_demo_userid ON players(demo_id, userid);
 "#;
 
 impl Db {
@@ -469,15 +484,22 @@ impl Db {
         Ok(())
     }
 
-    pub fn insert_rounds(&self, demo_id: i64, rounds: &[Round]) -> Result<()> {
+    pub fn insert_rounds(&self, demo_id: i64, rounds: &[Round], steamid_of: SteamIdOf) -> Result<()> {
         let mut ins = self.conn.prepare(
             "INSERT INTO rounds (demo_id, round_number, start_tick, end_tick, winner, win_reason,
-                                 capturer_userid)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                                 capturer_steamid, capturer_userid)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         )?;
         for r in rounds {
             ins.execute(rusqlite::params![
-                demo_id, r.number, r.start_tick, r.end_tick, r.winner, r.reason, r.capturer_userid
+                demo_id,
+                r.number,
+                r.start_tick,
+                r.end_tick,
+                r.winner,
+                r.reason,
+                r.capturer_userid.and_then(steamid_of),
+                r.capturer_userid,
             ])?;
         }
         Ok(())
@@ -546,20 +568,26 @@ impl Db {
         demo_id: i64,
         kills: &[crate::extract::net::Kill],
         name_of: &dyn Fn(u32) -> Option<String>,
+        steamid_of: SteamIdOf,
     ) -> Result<()> {
         let mut ins = self.conn.prepare(
-            "INSERT INTO kills (demo_id, tick, victim_userid, victim_name, attacker_userid,
-                                attacker_name, assists, weapon, headshot, suicide, explosive, ghoster)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            "INSERT INTO kills (demo_id, tick, victim_steamid, victim_userid, victim_name,
+                                attacker_steamid, attacker_userid, attacker_name,
+                                assister_steamid, assists, weapon, headshot, suicide, explosive,
+                                ghoster)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
         )?;
         for k in kills {
             ins.execute(rusqlite::params![
                 demo_id,
                 k.tick,
+                steamid_of(k.victim_userid),
                 k.victim_userid,
                 name_of(k.victim_userid),
+                steamid_of(k.attacker_userid),
                 k.attacker_userid,
                 name_of(k.attacker_userid),
+                steamid_of(k.assists),
                 k.assists,
                 k.weapon,
                 k.headshot,
@@ -575,14 +603,15 @@ impl Db {
         &self,
         demo_id: i64,
         pings: &[crate::extract::net::Ping],
+        steamid_of: SteamIdOf,
     ) -> Result<()> {
         let mut ins = self.conn.prepare(
-            "INSERT INTO player_pings (demo_id, tick, userid, team, x, y, z, ghoster_ping)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            "INSERT INTO player_pings (demo_id, tick, steamid, userid, team, x, y, z, ghoster_ping)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         )?;
         for p in pings {
             ins.execute(rusqlite::params![
-                demo_id, p.tick, p.userid, p.team, p.x, p.y, p.z, p.ghoster_ping,
+                demo_id, p.tick, steamid_of(p.userid), p.userid, p.team, p.x, p.y, p.z, p.ghoster_ping,
             ])?;
         }
         Ok(())
@@ -592,14 +621,24 @@ impl Db {
         &self,
         demo_id: i64,
         callouts: &[crate::extract::net::GhostCallout],
+        steamid_of: SteamIdOf,
     ) -> Result<()> {
         let mut ins = self.conn.prepare(
-            "INSERT INTO ghost_callouts (demo_id, tick, userid, team, target_entity_id, x, y, z)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            "INSERT INTO ghost_callouts (demo_id, tick, steamid, userid, team, target_entity_id,
+                                         x, y, z)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         )?;
         for c in callouts {
             ins.execute(rusqlite::params![
-                demo_id, c.tick, c.userid, c.team, c.target_entity_id, c.x, c.y, c.z,
+                demo_id,
+                c.tick,
+                steamid_of(c.userid),
+                c.userid,
+                c.team,
+                c.target_entity_id,
+                c.x,
+                c.y,
+                c.z,
             ])?;
         }
         Ok(())
@@ -623,14 +662,15 @@ impl Db {
         &self,
         demo_id: i64,
         changes: &[crate::extract::net::TeamChange],
+        steamid_of: SteamIdOf,
     ) -> Result<()> {
         let mut ins = self.conn.prepare(
-            "INSERT INTO team_changes (demo_id, tick, userid, team, old_team, disconnect)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO team_changes (demo_id, tick, steamid, userid, team, old_team, disconnect)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         )?;
         for c in changes {
             ins.execute(rusqlite::params![
-                demo_id, c.tick, c.userid, c.team, c.old_team, c.disconnect,
+                demo_id, c.tick, steamid_of(c.userid), c.userid, c.team, c.old_team, c.disconnect,
             ])?;
         }
         Ok(())
@@ -640,13 +680,16 @@ impl Db {
         &self,
         demo_id: i64,
         changes: &[crate::extract::net::RankChange],
+        steamid_of: SteamIdOf,
     ) -> Result<()> {
         let mut ins = self.conn.prepare(
-            "INSERT INTO rank_changes (demo_id, tick, userid, old_rank, new_rank)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO rank_changes (demo_id, tick, steamid, userid, old_rank, new_rank)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         )?;
         for c in changes {
-            ins.execute(rusqlite::params![demo_id, c.tick, c.userid, c.old_rank, c.new_rank])?;
+            ins.execute(rusqlite::params![
+                demo_id, c.tick, steamid_of(c.userid), c.userid, c.old_rank, c.new_rank,
+            ])?;
         }
         Ok(())
     }
