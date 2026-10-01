@@ -108,9 +108,12 @@ One row per parsed demo file; every other table hangs off `id`.
 
 ### `players`
 
-Roster: one row per player seen in the demo, from the string-table dump at
-recording start plus `player_connect` events for late joiners. Renames keep
-the latest name.
+Roster: one row per connection seen in the demo. Players present when
+recording began come from the `userinfo` string-table dump. Late joiners
+come from later updates to that table, or from a `player_connect_client`
+event in a POV recording. A player who leaves and rejoins gets a new
+`userid` and so a second row with the same `steamid`. Renames keep the
+latest name.
 
 | column | meaning |
 |---|---|
@@ -119,7 +122,7 @@ the latest name.
 | `name` | player name (latest, if they renamed) |
 | `steamid` | e.g. `[U:1:12345678]`, or `BOT` |
 | `is_bot` | 1 for server bots |
-| `first_seen_tick` | when the player first appeared: 0 for players present when the recording began, the `player_connect` tick for late joiners |
+| `first_seen_tick` | when the player first appeared: 0 for players present when the recording began, the tick the server announced them for late joiners |
 
 ### `server_cvars`
 
