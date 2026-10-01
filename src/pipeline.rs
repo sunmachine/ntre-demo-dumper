@@ -145,7 +145,7 @@ pub fn parse_one(path: &Path, db: &Db, opts: &Options) -> Result<Outcome> {
     for extractor in &mut extractors {
         summary.extend(extractor.persist(db, demo_id, &ctx)?);
     }
-    db.insert_rounds(demo_id, &rounds)?;
+    db.insert_rounds(demo_id, &rounds, &|userid| net.steamid_of(userid))?;
     summary.push(("rounds".into(), rounds.len()));
     if let Some(output) = &entity_output {
         db.insert_player_samples(demo_id, &output.samples)?;

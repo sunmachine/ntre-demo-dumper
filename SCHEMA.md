@@ -14,12 +14,23 @@ so if you add a column, document it.
 - **Ticks and time.** All `tick` columns are server ticks. Convert to seconds
   with `tick / demos.tickrate` (NT;RE runs at ~66.67 ticks/s). Tick 0 is the
   start of the recording, not the start of the match.
-- **Two player identities.** A `userid` is a server session id, used by
-  `kills` and most game events. An `entity_id` is the player's slot in the
-  entity list, used by `player_samples` and `chat.client_entity`. The
-  `players` table holds both and is the join hub:
-  `kills.victim_userid = players.userid`,
+- **Three player identities.** A `steamid` names a person and is the same
+  in every demo, so it is the key to join event tables on, within a demo
+  or across demos. A `userid` names one connection to one server. The
+  server counts connections upward from its start (upstream
+  `src/public/cdll_int.h:95`), so a player keeps their userid across map
+  changes, gets a new one on rejoining, and has an unrelated one on another
+  server or night. An `entity_id` is the player's slot in the entity list,
+  used by `player_samples` and `chat.client_entity`. The `players` table
+  holds all three and is the join hub:
+  `kills.victim_steamid = players.steamid`,
   `player_samples.entity_id = players.entity_id`.
+- **When `userid` is still needed.** Every bot's `steamid` is the literal
+  `BOT`, so only `userid` tells two bots apart. The `userid` fields inside
+  `game_events` are the wire values and join `players.userid`. A player
+  who rejoins can hold a different entity slot per connection, so reaching
+  `entity_id` from an event row also goes through `userid`. Event tables
+  keep their `userid` columns for these uses.
 - **Coordinates.** Source engine world units (16 units ≈ 1 foot), map-specific
   origin: `x`/`y` horizontal, `z` up. Angles are degrees: `yaw` 0–360
   counter-clockwise around `z`, `pitch` negative looking up / positive looking
@@ -62,20 +73,20 @@ rows are recomputed on every parse and may change when a rule improves.
 | `player_resource` | tick series | | `entity_id` |
 | `pov_samples` | tick series | | none (the recorder) |
 | `recorder_inputs` | tick series | POV only | none (the recorder) |
-| `kills` | event log | | `userid` |
+| `kills` | event log | | `steamid` |
 | `attacker_hits` | event log | SourceTV only, pre-July-2026 builds | `entity_id` |
-| `player_pings` | event log | POV only | `userid` |
-| `ghost_callouts` | event log | POV only | `userid`, `entity_id` |
+| `player_pings` | event log | POV only | `steamid` |
+| `ghost_callouts` | event log | POV only | `userid` (bots only), `entity_id` |
 | `team_scores` | event log | POV only | none (per team) |
-| `team_changes` | event log | | `userid` |
-| `rank_changes` | event log | POV only | `userid` |
+| `team_changes` | event log | | `steamid` |
+| `rank_changes` | event log | POV only | `steamid` |
 | `round_starts` | event log | | none |
 | `round_results` | event log | | none |
 | `chat` | event log | | `entity_id` |
 | `console_cmds` | event log | POV only | none (the recorder) |
 | `game_events` | event log | | varies (JSON fields) |
 | `announcements` | derived | | none |
-| `rounds` | derived | | `userid` |
+| `rounds` | derived | | `steamid` |
 | `inferred_hits` | inferred | | `entity_id` |
 
 ## Reference tables
@@ -118,9 +129,9 @@ latest name.
 | column | meaning |
 |---|---|
 | `entity_id` | entity slot; joins `player_samples.entity_id` and `chat.client_entity` |
-| `userid` | server session id; joins `kills.*_userid` and `userid` fields in `game_events` |
+| `userid` | connection id, see Shared conventions; joins the `userid` columns of event tables and the `userid` fields in `game_events` |
 | `name` | player name (latest, if they renamed) |
-| `steamid` | e.g. `[U:1:12345678]`, or `BOT` |
+| `steamid` | e.g. `[U:1:12345678]`, or `BOT` for every bot; joins the `steamid` columns of event tables |
 | `is_bot` | 1 for server bots |
 | `first_seen_tick` | when the player first appeared: 0 for players present when the recording began, the tick the server announced them for late joiners |
 
@@ -243,7 +254,8 @@ Kill feed from NT;RE's own `player_death` game event definition.
 | column | meaning |
 |---|---|
 | `tick` | when the kill happened |
-| `victim_userid`, `attacker_userid` | join `players.userid`; attacker 0 = world/environment |
+| `victim_steamid`, `attacker_steamid`, `assister_steamid` | the players' Steam IDs, looked up in the roster at parse time; join `players.steamid`. NULL for the attacker of a world kill, for the assister when nobody assisted, and for a player missing from the roster |
+| `victim_userid`, `attacker_userid` | connection ids from the event's `userid` and `attacker` fields; join `players.userid`; attacker 0 = world/environment |
 | `victim_name`, `attacker_name` | resolved at parse time; NULL if unknown |
 | `assists` | userid of the assisting player, or 0 for none; joins `players.userid` (NT;RE defines the event field as "user ID who assists") |
 | `weapon` | weapon's entity name without `weapon_`, e.g. `srm`; see Weapon reference below. A grenade or detpack kill's inflictor is mapped to the weapon that made it |
@@ -283,7 +295,8 @@ are present, not just the recorder's.
 | column | meaning |
 |---|---|
 | `tick` | when the ping was placed |
-| `userid` | pinging player; joins `players.userid` |
+| `steamid` | pinging player; joins `players.steamid`. NULL if missing from the roster |
+| `userid` | pinging player's connection id, from the event; joins `players.userid` |
 | `team` | pinging player's team, coded as in `player_samples.team` |
 | `x`, `y`, `z` | pinged world position |
 | `ghoster_ping` | 1 when the pinging player carried the ghost or was the VIP |
@@ -299,7 +312,8 @@ compass. Players never send callouts, so a game without bots has no rows.
 | column | meaning |
 |---|---|
 | `tick` | when the callout fired |
-| `userid` | ghost carrier; joins `players.userid` |
+| `steamid` | ghost carrier's Steam ID, which is `BOT` because only bots call out |
+| `userid` | ghost carrier, from the event; joins `players.userid` and is the column that identifies the bot |
 | `team` | carrier's team, coded as in `player_samples.team` |
 | `target_entity_id` | spotted enemy; joins `players.entity_id` |
 | `x`, `y`, `z` | spotted enemy's world position |
@@ -319,7 +333,8 @@ Team joins and switches, from `player_team` game events.
 | column | meaning |
 |---|---|
 | `tick` | when the change happened |
-| `userid` | joins `players.userid` |
+| `steamid` | the player; joins `players.steamid`. NULL if missing from the roster |
+| `userid` | connection id, from the event; joins `players.userid` |
 | `team`, `old_team` | new and previous team, coded as in `player_samples.team` |
 | `disconnect` | 1 when the change is a player disconnecting |
 
@@ -328,7 +343,8 @@ Team joins and switches, from `player_team` game events.
 **Tags: POV only**
 
 Rank progression, from `player_rankchange` game events. Columns: `tick`,
-`userid` (joins `players.userid`), `old_rank`, `new_rank` (rank index,
+`steamid` (joins `players.steamid`), `userid` (connection id, from the
+event; joins `players.userid`), `old_rank`, `new_rank` (rank index,
 increasing with XP).
 
 ### `round_starts`
@@ -378,7 +394,7 @@ Every game event the recording carries, decoded against the demo's own
 event definitions. SourceTV recordings carry only a few types, such as
 `player_death` and `round_start`. Events such as `ghost_capture` appear
 only in POV recordings; for captures in any recording, use
-`rounds.capturer_userid`.
+`rounds.capturer_steamid`.
 
 | column | meaning |
 |---|---|
@@ -432,7 +448,8 @@ alive. Otherwise it is NULL.
 | `start_tick`, `end_tick` | NULL when the demo started mid-round, or the round never ended (cut off, or aborted by a pause) |
 | `winner` | `jinrai`, `nsf` or `tie`, as in `round_results.team`; NULL for a round that never ended or whose winner is unknown |
 | `win_reason` | how the round was won, below; NULL when unknown. The full text is in `round_results.message` |
-| `capturer_userid` | the player who carried the ghost into the capture zone; joins `players.userid`. NULL unless the round was won by a capture |
+| `capturer_steamid` | the player who carried the ghost into the capture zone; joins `players.steamid`. NULL unless the round was won by a capture |
+| `capturer_userid` | the capturer's connection id; joins `players.userid` and tells bots apart |
 
 | `win_reason` | meaning |
 |---|---|
@@ -504,6 +521,19 @@ Weapons as of August 2026, by entity name:
 | `weapon_ghost` | the ghost (objective) |
 
 The set is open: names added by future NT;RE releases appear as-is.
+
+## Example: kills per player across demos
+
+Steam IDs hold across demos, so no join is needed. Bots share one Steam ID
+and are left out.
+
+```sql
+SELECT attacker_steamid, count(*) AS kills
+FROM kills
+WHERE attacker_steamid IS NOT NULL AND attacker_steamid <> 'BOT'
+GROUP BY attacker_steamid
+ORDER BY kills DESC;
+```
 
 ## Example: heatmap query
 
