@@ -104,9 +104,12 @@ ntre-demo-dumper -o out.sqlite *.dem         # multiple demos, one database
 ntre-demo-dumper --pov-sample 10 my.dem      # thin POV samples to every 10th frame
 ntre-demo-dumper --match 'REGEX' my.dem      # capture extra announcement patterns
 ntre-demo-dumper --all-strings my.dem        # exploratory: keep every recovered string
+ntre-demo-dumper --last-round 9 my.dem       # keep rounds 1-9, drop everything after
 ```
 
-A demo already in the database is skipped, even under another name.
+A demo already in the database is skipped, even under another name. That
+includes a demo parsed with `--last-round`, so parse the whole demo into
+another database file if you need it later.
 
 The tables cover metadata, announcements, rounds, scores, roster, kills,
 pings, chat, game events, and per-tick samples. Some fill only for SourceTV

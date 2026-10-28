@@ -24,6 +24,9 @@ pub struct Options {
     pub all_strings: bool,
     pub pov_sample: u32,
     pub threads: usize,
+    /// Keep rounds up to this one and cut the demo's rows at the next
+    /// round's start.
+    pub last_round: Option<i32>,
 }
 
 pub enum LogLevel {
@@ -146,13 +149,23 @@ pub fn parse_one(path: &Path, db: &Db, opts: &Options) -> Result<Outcome> {
     // Rounds take start markers from the announcements, ends from the net
     // pass, and the capturer from entity state, so they wait for all three.
     let evidence = rounds::Evidence::new(entity_output.as_ref(), &net.players, &net.kills);
-    let rounds = rounds::derive(announcements.found(&ctx), &net.round_results, &evidence);
+    let mut rounds = rounds::derive(announcements.found(&ctx), &net.round_results, &evidence);
+    let cut = match opts.last_round {
+        Some(last) => rounds::cut_after(&mut rounds, last)?,
+        None => None,
+    };
     let mut extractors: Vec<&mut dyn FrameExtractor> =
         vec![&mut announcements, &mut pov, &mut console, &mut inputs, &mut net];
 
     db.begin()?;
     let demo_id = identity.id;
-    db.insert_demo(&identity, &path.display().to_string(), &header, server_info.as_ref())?;
+    db.insert_demo(
+        &identity,
+        &path.display().to_string(),
+        &header,
+        server_info.as_ref(),
+        opts.last_round,
+    )?;
     let mut summary = Vec::new();
     for extractor in &mut extractors {
         summary.extend(extractor.persist(db, demo_id, &ctx)?);
@@ -179,6 +192,11 @@ pub fn parse_one(path: &Path, db: &Db, opts: &Options) -> Result<Outcome> {
         if let Some(warning) = &output.warning {
             logs.push((LogLevel::Warning, warning.clone()));
         }
+    }
+    // Every pass ran over the whole file, so the cut is made on the rows
+    // they wrote, inside the same transaction.
+    if let (Some(tick), Some(last)) = (cut, opts.last_round) {
+        summary.push((format!("rows cut after round {last}"), db.cut_at(demo_id, tick)?));
     }
     db.commit()?;
 
