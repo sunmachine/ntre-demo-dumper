@@ -31,7 +31,7 @@ use crate::extract::rounds::Round;
 pub type SteamIdOf<'a> = &'a dyn Fn(u32) -> Option<String>;
 
 /// Stored as `PRAGMA user_version`; see the module comment for when to raise it.
-const SCHEMA_VERSION: i32 = 2;
+const SCHEMA_VERSION: i32 = 3;
 
 pub struct Db {
     conn: Connection,
@@ -68,13 +68,15 @@ CREATE TABLE IF NOT EXISTS demos (
 );
 
 -- Player roster: from the string-table dump at recording start plus
--- player_connect/player_info game events for late joiners.
+-- player_connect/player_info game events for late joiners. neo_name comes
+-- from the player entity, so in POV demos it needs the player in the PVS.
 CREATE TABLE IF NOT EXISTS players (
     id INTEGER PRIMARY KEY,
     demo_id INTEGER NOT NULL REFERENCES demos(id),
     entity_id INTEGER NOT NULL,    -- joins player_samples.entity_id, chat.client_entity
     userid INTEGER NOT NULL,       -- joins kills.*_userid and game-event userid fields
-    name TEXT NOT NULL,            -- latest name if the player renamed
+    name TEXT NOT NULL,            -- Steam name, the latest if the player renamed
+    neo_name TEXT,                 -- in-game name set with neo_name; NULL if none was seen
     steamid TEXT NOT NULL,
     is_bot INTEGER NOT NULL,
     first_seen_tick INTEGER NOT NULL -- 0 = present when recording began
@@ -552,12 +554,20 @@ impl Db {
 
     pub fn insert_players(&self, demo_id: i64, players: &[&crate::extract::net::Player]) -> Result<()> {
         let mut ins = self.conn.prepare(
-            "INSERT INTO players (demo_id, entity_id, userid, name, steamid, is_bot, first_seen_tick)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO players (demo_id, entity_id, userid, name, neo_name, steamid, is_bot,
+                                  first_seen_tick)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         )?;
         for p in players {
             ins.execute(rusqlite::params![
-                demo_id, p.entity_id, p.user_id, p.name, p.steam_id, p.is_bot, p.first_seen_tick,
+                demo_id,
+                p.entity_id,
+                p.user_id,
+                p.name,
+                p.neo_name,
+                p.steam_id,
+                p.is_bot,
+                p.first_seen_tick,
             ])?;
         }
         Ok(())

@@ -5,7 +5,8 @@
 //! ARCHITECTURE.md; the library's typed game events are NOT safe, while its
 //! entity decoding is). The pass also records the ghost carrier from the
 //! game rules proxy and whether each capture zone is active, the state
-//! `rounds` uses to name a capturer.
+//! `rounds` uses to name a capturer, and each player's `neo_name`, which the
+//! roster takes.
 //!
 //! This is a whole-file pass, not a `FrameExtractor`, because tf-demo-parser
 //! owns its own demo walk. A mid-file decode error degrades to a warning and
@@ -84,6 +85,15 @@ pub struct CarrierChange {
     pub entity_id: u32,
 }
 
+/// One change of a player entity's `m_szNeoName`, the name the player set
+/// with `neo_name`. The prop is empty while the player has set none
+/// (upstream `neo_player.cpp:1792-1810`).
+pub struct NeoNameChange {
+    pub tick: u32,
+    pub entity_id: u32,
+    pub name: String,
+}
+
 /// One change of a ghost capture zone's `m_bIsActive`.
 pub struct ZoneChange {
     pub tick: u32,
@@ -99,6 +109,7 @@ pub struct EntityOutput {
     pub damage_samples: Vec<DamageSample>,
     pub carrier_changes: Vec<CarrierChange>,
     pub zone_changes: Vec<ZoneChange>,
+    pub neo_name_changes: Vec<NeoNameChange>,
     pub player_classes: Vec<String>,
     pub warning: Option<String>,
 }
@@ -140,6 +151,7 @@ struct PlayerState {
     class_num: i64,
     camo: bool,
     life_state: i64,
+    neo_name: String,
     /// last seen m_rfAttackersAccumlator values, indexed by attacker entity
     attackers: Vec<f32>,
 }
@@ -185,6 +197,7 @@ struct EntityAnalyser {
     damage_samples: Vec<DamageSample>,
     carrier_changes: Vec<CarrierChange>,
     zone_changes: Vec<ZoneChange>,
+    neo_name_changes: Vec<NeoNameChange>,
 }
 
 const EHANDLE_ENTITY_MASK: i64 = (1 << 11) - 1;
@@ -360,6 +373,17 @@ impl EntityAnalyser {
                 ("m_lifeState", SendPropValue::Integer(life)) => {
                     player.life_state = *life;
                     changed = true;
+                }
+                // Not a player_samples column, so it never sets `changed`.
+                ("m_szNeoName", SendPropValue::String(name)) => {
+                    if player.neo_name != *name {
+                        player.neo_name.clone_from(name);
+                        self.neo_name_changes.push(NeoNameChange {
+                            tick,
+                            entity_id,
+                            name: name.clone(),
+                        });
+                    }
                 }
                 // Legacy SendPropArray: arrives whole, 1-indexed by attacker
                 // entity id. The server keeps only the sub-1.0 fractional
@@ -620,6 +644,7 @@ impl MessageHandler for EntityAnalyser {
             damage_samples: self.damage_samples,
             carrier_changes: self.carrier_changes,
             zone_changes: self.zone_changes,
+            neo_name_changes: self.neo_name_changes,
             player_classes: player_class_names,
             warning: None,
         }

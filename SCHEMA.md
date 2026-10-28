@@ -126,11 +126,19 @@ event in a POV recording. A player who leaves and rejoins gets a new
 `userid` and so a second row with the same `steamid`. Renames keep the
 latest name.
 
+A player has two names. `name` is the Steam name from the userinfo string
+table. `neo_name` is the in-game name the player sets with the `neo_name`
+setting, which other players see instead of the Steam name unless they turn
+that off. It comes from the player entity's `m_szNeoName` property, so in a
+POV recording it is NULL for a player who never came within the recorder's
+view.
+
 | column | meaning |
 |---|---|
 | `entity_id` | entity slot; joins `player_samples.entity_id` and `chat.client_entity` |
 | `userid` | connection id, see Shared conventions; unique within a demo, which an index enforces; joins the `userid` columns of event tables and the `userid` fields in `game_events` |
-| `name` | player name (latest, if they renamed) |
+| `name` | Steam name, the latest if they renamed |
+| `neo_name` | in-game name, the last one set while recorded; NULL if the player set none |
 | `steamid` | e.g. `[U:1:12345678]`, or `BOT` for every bot; joins the `steamid` columns of event tables |
 | `is_bot` | 1 for server bots |
 | `first_seen_tick` | when the player first appeared: 0 for players present when the recording began, the tick the server announced them for late joiners |
