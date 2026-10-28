@@ -273,6 +273,12 @@ player (`:4413`). `headshot` reports the last body part hit before the
 death (`:4412`), so on a world kill it describes an earlier hit and not the
 death.
 
+Apart from world kills and kills nobody assisted, every userid in a kill
+should have a roster row. The dumper warns at parse time when a kill names
+a userid that the roster never saw. That kill's names and Steam IDs for the
+missing player are NULL, and the warning marks a roster gap worth
+reporting with the demo.
+
 ### `attacker_hits`
 
 **Tags: SourceTV only, pre-July-2026 builds**
