@@ -50,6 +50,13 @@ so if you add a column, document it.
 
   Untagged event-derived tables work in both demo types but can be empty
   for demos recorded on NT;RE versions predating the event.
+- **Demos cut at a round.** `--last-round N` keeps rounds 1 to N of each
+  demo. Every row from the start of the next round on is left out, so
+  round N keeps its end and the time after it. Rows from before round 1,
+  such as warmup, stay, because the tick series carry their state forward
+  into the kept rounds. `demos.last_round` records the N. A demo parsed
+  this way counts as parsed, so to get the whole demo later, parse it into
+  another database file.
 - **Schema version.** A database records the schema version that wrote it,
   and the dumper refuses to add demos to a database written by another
   version, so parse into a new file after upgrading.
@@ -116,6 +123,7 @@ One row per parsed demo file; every other table hangs off `id`.
 | `map_md5` | MD5 of the map file, which tells versions of one map apart |
 | `recorder_entity_id` | the recording client's entity; joins `players.entity_id` |
 | `parser_version` | the dumper version that wrote this demo's rows |
+| `last_round` | the `--last-round` this demo was parsed with, so its rows end where the next round began; NULL when the whole demo was parsed |
 
 ### `players`
 

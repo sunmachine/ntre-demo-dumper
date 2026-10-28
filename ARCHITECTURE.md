@@ -32,6 +32,9 @@ that touches all three layers: read file → walk frames → run extractors →
 persist. Neither contains parsing or SQL logic. Rounds are derived in the
 pipeline after the entity pass, because the ghost capturer comes from
 entity state, and are written in the same transaction as the rest.
+`--last-round` cuts the demo after the rounds are derived. Every pass still
+reads the whole file, and the pipeline then deletes the rows from the next
+round's start tick on, in that same transaction (`Db::cut_at`).
 
 ## Layer rules
 
@@ -123,6 +126,12 @@ server user ID, unique while server is running" (upstream
 rejoined come back with a higher one: `SELECT steamid,
 group_concat(DISTINCT userid) FROM players GROUP BY steamid`. The event
 tables therefore store the roster's Steam ID beside each userid.
+
+A round's start tick is the tick of its `ROUND N STARTED` text.
+`CNEORules::StartNextRound` fires `round_start`, respawns every player and
+prints that text in one call (upstream at `bea96408`,
+`src/game/shared/neo/neo_gamerules.cpp:2879`, `:3004`, `:3032`), so all
+three land on one tick and nothing of the round comes before it.
 
 When a round ends the match or leads into sudden death, `SetWinningTeam`
 substitutes "Team X wins the match!", "The match is tied!" or "Next round:

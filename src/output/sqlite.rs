@@ -64,7 +64,8 @@ CREATE TABLE IF NOT EXISTS demos (
     tick_interval REAL,            -- server seconds per tick, shortest decimal form
     map_md5 TEXT,                  -- hex MD5 of the server's map file
     recorder_entity_id INTEGER,    -- recording client's entity slot
-    parser_version TEXT NOT NULL   -- dumper version that wrote this demo's rows
+    parser_version TEXT NOT NULL,  -- dumper version that wrote this demo's rows
+    last_round INTEGER             -- --last-round the demo was parsed with; NULL = the whole demo
 );
 
 -- Player roster: from the string-table dump at recording start plus
@@ -424,6 +425,7 @@ impl Db {
         path: &str,
         h: &DemoHeader,
         si: Option<&ServerInfo>,
+        last_round: Option<i32>,
     ) -> Result<()> {
         let os = si.map(|s| match s.os {
             'l' | 'L' => "linux".to_string(),
@@ -440,9 +442,10 @@ impl Db {
                                 client, map, game_directory, playback_seconds,
                                 playback_ticks, playback_frames, tickrate, sourcetv,
                                 dedicated, server_os, host_name, max_clients,
-                                tick_interval, map_md5, recorder_entity_id, parser_version)
+                                tick_interval, map_md5, recorder_entity_id, parser_version,
+                                last_round)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
-                     ?17, ?18, ?19, ?20, ?21, ?22)",
+                     ?17, ?18, ?19, ?20, ?21, ?22, ?23)",
             rusqlite::params![
                 identity.id,
                 identity.sha256,
@@ -466,9 +469,39 @@ impl Db {
                 md5,
                 si.map(|s| s.player_slot as u32 + 1),
                 env!("CARGO_PKG_VERSION"),
+                last_round,
             ],
         )?;
         Ok(())
+    }
+
+    /// Delete one demo's rows from `tick` on, for a parse cut short by
+    /// `--last-round`, and return how many went. Every table with a `tick`
+    /// column is cut on it, so a new table is covered without a change
+    /// here, and `players` is cut on `first_seen_tick`. `demos` and
+    /// `rounds` hold no single tick; the pipeline trims the rounds before
+    /// inserting them.
+    pub fn cut_at(&self, demo_id: i64, tick: i32) -> Result<usize> {
+        let tables: Vec<String> = self
+            .conn
+            .prepare(
+                "SELECT m.name FROM sqlite_master m, pragma_table_info(m.name) c
+                 WHERE m.type = 'table' AND c.name = 'tick'",
+            )?
+            .query_map([], |row| row.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        let mut removed = 0;
+        for table in tables {
+            removed += self.conn.execute(
+                &format!("DELETE FROM {table} WHERE demo_id = ?1 AND tick >= ?2"),
+                rusqlite::params![demo_id, tick],
+            )?;
+        }
+        removed += self.conn.execute(
+            "DELETE FROM players WHERE demo_id = ?1 AND first_seen_tick >= ?2",
+            rusqlite::params![demo_id, tick],
+        )?;
+        Ok(removed)
     }
 
     pub fn insert_announcements(
@@ -904,7 +937,7 @@ mod tests {
             playback_frames: 0,
             signon_length: 0,
         };
-        db.insert_demo(&identity, "first.dem", &header, None).unwrap();
+        db.insert_demo(&identity, "first.dem", &header, None, None).unwrap();
         assert_eq!(
             db.find_demo(&identity.sha256).unwrap(),
             Some((identity.id, "first.dem".to_string()))
@@ -946,6 +979,85 @@ mod tests {
         assert!(err.contains("schema version 0"), "{err}");
         assert!(err.contains(&format!("version {SCHEMA_VERSION}")), "{err}");
         std::fs::remove_file(&path).unwrap();
+    }
+
+    /// `cut_at` keys on a `tick` column. A table that holds time in some
+    /// other column has to be cut by hand there and listed here, so a new
+    /// table cannot keep rows past the cut unnoticed.
+    #[test]
+    fn every_table_is_cut_by_tick_or_handled_by_hand() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(SCHEMA).unwrap();
+        let without_tick: Vec<String> = conn
+            .prepare(
+                "SELECT name FROM sqlite_master m WHERE type = 'table' AND NOT EXISTS
+                   (SELECT 1 FROM pragma_table_info(m.name) WHERE name = 'tick')
+                 ORDER BY name",
+            )
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(without_tick, ["demos", "players", "rounds"]);
+    }
+
+    #[test]
+    fn cut_at_removes_rows_from_the_tick_on() {
+        let db = Db::open(Path::new(":memory:")).unwrap();
+        let header = DemoHeader {
+            demo_protocol: 3,
+            network_protocol: 24,
+            server_name: String::new(),
+            client_name: String::new(),
+            map_name: String::new(),
+            game_directory: String::new(),
+            playback_seconds: 0.0,
+            playback_ticks: 0,
+            playback_frames: 0,
+            signon_length: 0,
+        };
+        let cut = DemoIdentity::of(b"cut");
+        let other = DemoIdentity::of(b"other");
+        db.insert_demo(&cut, "cut.dem", &header, None, Some(2)).unwrap();
+        db.insert_demo(&other, "other.dem", &header, None, None).unwrap();
+        let (cut, other) = (cut.id, other.id);
+        let mut kill = db
+            .conn
+            .prepare(
+                "INSERT INTO kills (demo_id, tick, victim_userid, attacker_userid, assists,
+                                    weapon, headshot, suicide, explosive, ghoster)
+                 VALUES (?1, ?2, 2, 3, 0, 'srm', 0, 0, 0, 0)",
+            )
+            .unwrap();
+        for (demo_id, tick) in [(cut, 99), (cut, 100), (other, 100)] {
+            kill.execute(rusqlite::params![demo_id, tick]).unwrap();
+        }
+        let mut player = db
+            .conn
+            .prepare(
+                "INSERT INTO players (demo_id, entity_id, userid, name, steamid, is_bot,
+                                      first_seen_tick)
+                 VALUES (?1, ?2, ?2, '', '', 0, ?3)",
+            )
+            .unwrap();
+        for (userid, first_seen_tick) in [(2, 0), (3, 150)] {
+            player.execute(rusqlite::params![cut, userid, first_seen_tick]).unwrap();
+        }
+
+        assert_eq!(db.cut_at(cut, 100).unwrap(), 2);
+        let kills: Vec<(i64, i64)> = db
+            .conn
+            .prepare("SELECT demo_id, tick FROM kills ORDER BY tick, demo_id = ?1")
+            .unwrap()
+            .query_map([other], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(kills, [(cut, 99), (other, 100)]);
+        let players: i64 =
+            db.conn.query_row("SELECT count(*) FROM players", [], |row| row.get(0)).unwrap();
+        assert_eq!(players, 1);
     }
 
     /// SCHEMA.md must mention (in backticks) every table and every column,
@@ -1020,7 +1132,7 @@ mod tests {
 
         let db = super::Db::open(std::path::Path::new(":memory:")).unwrap();
         let identity = crate::demo::identity::DemoIdentity::of(b"tick interval");
-        db.insert_demo(&identity, "path", &header, Some(&info)).unwrap();
+        db.insert_demo(&identity, "path", &header, Some(&info), None).unwrap();
         let demo_id = identity.id;
         let stored: f64 = db
             .conn

@@ -53,6 +53,10 @@ struct Args {
     /// Worker threads for payload skimming (default: all cores)
     #[arg(short = 'j', long)]
     threads: Option<usize>,
+
+    /// Keep rounds 1 to N only; drop every row from round N+1's start on
+    #[arg(long, value_name = "N", value_parser = clap::value_parser!(i32).range(1..))]
+    last_round: Option<i32>,
 }
 
 const BANNER: &str = r#"
@@ -82,6 +86,7 @@ fn main() -> Result<()> {
         threads: args
             .threads
             .unwrap_or_else(|| thread::available_parallelism().map(|n| n.get()).unwrap_or(1)),
+        last_round: args.last_round,
     };
     let db = output::sqlite::Db::open(&args.output)?;
     let mut failures = 0usize;

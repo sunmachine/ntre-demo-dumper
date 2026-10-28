@@ -9,6 +9,7 @@
 //! has no end). Facts the round-end message does not carry, such as who
 //! captured the ghost, come from the entity state around each end.
 
+use anyhow::{bail, Result};
 use regex::Regex;
 use std::collections::HashMap;
 
@@ -352,6 +353,31 @@ pub fn derive(
     rounds
 }
 
+/// Drop the rounds after round `last` and return the tick to cut the
+/// demo's other rows at, or None when no later round began, so nothing
+/// needs cutting.
+///
+/// The cut is the start tick of the first round numbered after `last`. The
+/// server fires that round's `round_start` event, respawns the players and
+/// prints its start text in one call (upstream `neo_gamerules.cpp:2879`,
+/// `:3004`, `:3032`), so all of the next round lies at or after that tick, while
+/// round `last` keeps its end and the time after it. A repeated number, as
+/// after an admin pause, is not later, so a restarted round `last` stays.
+pub fn cut_after(rounds: &mut Vec<Round>, last: i32) -> Result<Option<i32>> {
+    let Some(i) = rounds.iter().position(|r| r.number.is_some_and(|n| n > last)) else {
+        return Ok(None);
+    };
+    let next = rounds[i].number.unwrap_or_default();
+    if i == 0 {
+        bail!("the recording has no round up to round {last}; it begins in round {next}");
+    }
+    let Some(cut) = rounds[i].start_tick else {
+        bail!("the start of round {next} was not recorded, so there is no tick to cut at");
+    };
+    rounds.truncate(i);
+    Ok(Some(cut))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -648,6 +674,47 @@ mod tests {
         let evidence = Evidence::new(None, &roster, &[]);
         let r = match_end_round("jinrai", "Team Jinrai wins the match!", &evidence);
         assert_eq!((r.winner.as_deref(), r.reason.as_deref()), (Some("jinrai"), None));
+    }
+
+    /// Rounds 1 to 3 from start announcements at ticks 10, 100 and 200,
+    /// with round 2 aborted and restarted at tick 150.
+    fn rounds_with_restart() -> Vec<Round> {
+        let anns = [
+            ann(10, "- CTG ROUND 1 STARTED -"),
+            ann(100, "- CTG ROUND 2 STARTED -"),
+            ann(150, "- CTG ROUND 2 STARTED -"),
+            ann(200, "- CTG ROUND 3 STARTED -"),
+        ];
+        let results = [res(90, "nsf", "TIE"), res(190, "jinrai", "TIE")];
+        derive_without_entities(&anns, &results)
+    }
+
+    #[test]
+    fn cut_after_keeps_rounds_up_to_last_and_cuts_at_the_next_start() {
+        let mut rounds = rounds_with_restart();
+        assert_eq!(cut_after(&mut rounds, 2).unwrap(), Some(200));
+        let kept: Vec<_> = rounds.iter().map(|r| (r.number, r.start_tick)).collect();
+        assert_eq!(kept, [(Some(1), Some(10)), (Some(2), Some(100)), (Some(2), Some(150))]);
+
+        let mut rounds = rounds_with_restart();
+        assert_eq!(cut_after(&mut rounds, 1).unwrap(), Some(100));
+        assert_eq!(rounds.len(), 1);
+    }
+
+    #[test]
+    fn cut_after_the_last_recorded_round_cuts_nothing() {
+        let mut rounds = rounds_with_restart();
+        assert_eq!(cut_after(&mut rounds, 3).unwrap(), None);
+        assert_eq!(rounds.len(), 4);
+        assert_eq!(cut_after(&mut rounds, 9).unwrap(), None);
+    }
+
+    #[test]
+    fn cut_after_a_round_before_the_recording_fails() {
+        let anns = [ann(10, "- CTG ROUND 5 STARTED -")];
+        let mut rounds = derive_without_entities(&anns, &[]);
+        let err = cut_after(&mut rounds, 4).unwrap_err().to_string();
+        assert!(err.contains("begins in round 5"), "{err}");
     }
 
     #[test]
