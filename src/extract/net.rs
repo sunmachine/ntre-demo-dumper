@@ -292,6 +292,17 @@ impl NetPass {
         self.players.get(&userid).map(|p| p.steam_id.clone())
     }
 
+    /// How many kills name a victim, attacker or assister that the roster
+    /// never saw. Those rows get NULL names and Steam IDs. Userid 0 is the
+    /// world as attacker and nobody as assister, so it does not count.
+    pub fn kills_missing_from_roster(&self) -> usize {
+        let missing = |userid: u32| userid != 0 && !self.players.contains_key(&userid);
+        self.kills
+            .iter()
+            .filter(|k| missing(k.victim_userid) || missing(k.attacker_userid) || missing(k.assists))
+            .count()
+    }
+
     fn on_game_event(&mut self, tick: i32, name: &str, fields: &[(String, EventValue)]) {
         match name {
             "player_death" => self.kills.push(Kill {
@@ -593,6 +604,47 @@ mod tests {
         pass.on_set_convar(500, vec![("tv_transmitall".into(), "1".into())]);
         let rows: Vec<_> = pass.cvars.iter().map(|c| (c.tick, c.value.as_str())).collect();
         assert_eq!(rows, vec![(0, "0"), (500, "1")]);
+    }
+
+    fn roster_player(user_id: u32) -> Player {
+        Player {
+            entity_id: user_id,
+            user_id,
+            name: String::new(),
+            steam_id: String::new(),
+            is_bot: false,
+            first_seen_tick: 0,
+        }
+    }
+
+    fn kill(victim_userid: u32, attacker_userid: u32, assists: u32) -> Kill {
+        Kill {
+            tick: 0,
+            victim_userid,
+            attacker_userid,
+            assists,
+            weapon: String::new(),
+            headshot: false,
+            suicide: false,
+            explosive: false,
+            ghoster: false,
+        }
+    }
+
+    #[test]
+    fn kills_missing_from_roster_skip_the_world_and_no_assister() {
+        let pass = NetPass {
+            players: HashMap::from([(1, roster_player(1)), (2, roster_player(2))]),
+            kills: vec![
+                kill(1, 2, 0), // both players known, nobody assisted
+                kill(1, 0, 0), // world kill
+                kill(9, 2, 0), // victim unknown
+                kill(1, 9, 0), // attacker unknown
+                kill(1, 2, 9), // assister unknown
+            ],
+            ..NetPass::default()
+        };
+        assert_eq!(pass.kills_missing_from_roster(), 3);
     }
 
     #[test]

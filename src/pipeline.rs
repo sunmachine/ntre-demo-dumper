@@ -126,6 +126,15 @@ pub fn parse_one(path: &Path, db: &Db, opts: &Options) -> Result<Outcome> {
     };
 
     drop(extractors);
+    // The roster should hold every connection, so a kill naming a userid
+    // outside it points at a roster gap rather than a world kill.
+    let missing = net.kills_missing_from_roster();
+    if missing > 0 {
+        logs.push((
+            LogLevel::Warning,
+            format!("{missing} kill(s) name a player missing from the roster; their names and Steam IDs are NULL"),
+        ));
+    }
     let server_info = net.server_info.clone();
     let hits = entity_output
         .as_ref()
