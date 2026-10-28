@@ -13,6 +13,7 @@ use crate::demo::net::{
     parse_game_event, walk_packet, EventDefs, EventValue, NetMessage, ServerInfo,
 };
 use crate::demo::stringtables::{parse_userinfo, parse_userinfo_update, PlayerInfo};
+use crate::extract::entities::NeoNameChange;
 use crate::output::sqlite::Db;
 
 pub struct Kill {
@@ -109,6 +110,20 @@ pub struct Player {
     pub steam_id: String,
     pub is_bot: bool,
     pub first_seen_tick: i32,
+    /// The last non-empty `neo_name` the player's entity carried; None
+    /// when the player set none, or never came into a POV recorder's view.
+    pub neo_name: Option<String>,
+}
+
+/// The userid of the connection holding entity slot `entity_id` at `tick`.
+/// A slot passes to a later joiner when its player leaves, so the latest
+/// arrival at or before `tick` holds it.
+pub fn slot_holder(players: &HashMap<u32, Player>, entity_id: u32, tick: i32) -> Option<u32> {
+    players
+        .values()
+        .filter(|p| p.entity_id == entity_id && p.first_seen_tick <= tick)
+        .max_by_key(|p| (p.first_seen_tick, p.user_id))
+        .map(|p| p.user_id)
 }
 
 #[derive(Default)]
@@ -292,6 +307,22 @@ impl NetPass {
         self.players.get(&userid).map(|p| p.steam_id.clone())
     }
 
+    /// Give each roster row the latest neo name its entity slot carried
+    /// while the connection held it. An empty name is skipped, so a player
+    /// who clears their neo name keeps the last one they set, and a slot's
+    /// next player, whose entity starts out empty, cannot blank the name of
+    /// the player before them.
+    pub fn apply_neo_names(&mut self, changes: &[NeoNameChange]) {
+        for change in changes.iter().filter(|c| !c.name.is_empty()) {
+            let tick = i32::try_from(change.tick).unwrap_or(i32::MAX);
+            if let Some(user_id) = slot_holder(&self.players, change.entity_id, tick) {
+                if let Some(p) = self.players.get_mut(&user_id) {
+                    p.neo_name = Some(change.name.clone());
+                }
+            }
+        }
+    }
+
     /// How many kills name a victim, attacker or assister that the roster
     /// never saw. Those rows get NULL names and Steam IDs. Userid 0 is the
     /// world as attacker and nobody as assister, so it does not count.
@@ -369,9 +400,13 @@ impl NetPass {
                     steam_id: str_field(fields, "networkid"),
                     is_bot: bool_field(fields, "bot"),
                     first_seen_tick: tick,
+                    neo_name: None,
                 });
             }
-            "player_changename" | "player_changeneoname" => {
+            // player_changeneoname is left out: `name` keeps the Steam name,
+            // and the neo name comes from the entity pass for both
+            // recording types, in `apply_neo_names`.
+            "player_changename" => {
                 let user_id = id_field(fields, "userid");
                 if let Some(p) = self.players.get_mut(&user_id) {
                     let newname = str_field(fields, "newname");
@@ -399,6 +434,7 @@ impl NetPass {
                 steam_id: p.steam_id,
                 is_bot: p.is_fake_player,
                 first_seen_tick: tick,
+                neo_name: None,
             });
         }
     }
@@ -614,6 +650,7 @@ mod tests {
             steam_id: String::new(),
             is_bot: false,
             first_seen_tick: 0,
+            neo_name: None,
         }
     }
 
@@ -645,6 +682,45 @@ mod tests {
             ..NetPass::default()
         };
         assert_eq!(pass.kills_missing_from_roster(), 3);
+    }
+
+    fn neo_name(tick: u32, entity_id: u32, name: &str) -> NeoNameChange {
+        NeoNameChange { tick, entity_id, name: name.to_string() }
+    }
+
+    #[test]
+    fn neo_names_go_to_the_connection_holding_the_slot() {
+        // Userid 1 holds slot 5 from the start; userid 2 takes it at tick 100.
+        let mut pass = NetPass {
+            players: HashMap::from([
+                (1, Player { entity_id: 5, ..roster_player(1) }),
+                (2, Player { entity_id: 5, first_seen_tick: 100, ..roster_player(2) }),
+                (3, Player { entity_id: 6, ..roster_player(3) }),
+            ]),
+            ..NetPass::default()
+        };
+        pass.apply_neo_names(&[
+            neo_name(10, 5, "first"),
+            neo_name(50, 5, "renamed"),
+            neo_name(100, 5, ""), // the new player's entity starts out empty
+            neo_name(101, 5, "joiner"),
+        ]);
+        assert_eq!(pass.players[&1].neo_name.as_deref(), Some("renamed"));
+        assert_eq!(pass.players[&2].neo_name.as_deref(), Some("joiner"));
+        assert_eq!(pass.players[&3].neo_name, None);
+    }
+
+    #[test]
+    fn neo_name_rename_event_leaves_the_steam_name() {
+        let mut pass = NetPass {
+            players: HashMap::from([(1, Player { name: "steam".into(), ..roster_player(1) })]),
+            ..NetPass::default()
+        };
+        let fields = [("userid".to_string(), EventValue::Int(1)), ("newname".to_string(), EventValue::Str("neo".into()))];
+        pass.on_game_event(5, "player_changeneoname", &fields);
+        assert_eq!(pass.players[&1].name, "steam");
+        pass.on_game_event(6, "player_changename", &fields);
+        assert_eq!(pass.players[&1].name, "neo");
     }
 
     #[test]

@@ -126,6 +126,9 @@ pub fn parse_one(path: &Path, db: &Db, opts: &Options) -> Result<Outcome> {
     };
 
     drop(extractors);
+    if let Some(output) = &entity_output {
+        net.apply_neo_names(&output.neo_name_changes);
+    }
     // The roster should hold every connection, so a kill naming a userid
     // outside it points at a roster gap rather than a world kill.
     let missing = net.kills_missing_from_roster();

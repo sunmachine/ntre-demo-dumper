@@ -43,8 +43,9 @@ The crate/binary is named `ntre-demo-dumper`.
 - **Kill feed:** NT;RE's `player_death` game event: victim, attacker, assists,
   weapon, headshot/suicide/explosive/ghoster flags, with names resolved via the
   roster.
-- **Player roster:** name, userid, SteamID, bot flag, from the string-table
-  dump at recording start plus later updates to it for late joiners.
+- **Player roster:** Steam name, in-game name, userid, SteamID, bot flag,
+  from the string-table dump at recording start plus later updates to it
+  for late joiners.
 - **Chat:** SayText2 user messages.
 - **All game events:** every event the recording carries, decoded against
   the demo's own event definitions and stored with fields as JSON (query

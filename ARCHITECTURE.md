@@ -155,7 +155,17 @@ to the weapon's entity name via a static class table built from upstream's
 game rules proxy and the ghost capture zones are found the same way, by
 class names ending in "GameRulesProxy" and "GhostCapturePoint". The proxy's
 `m_iGhosterPlayer` names the ghost carrier, and each zone's `m_bIsActive`
-says whether a capture into it counts. `rounds` reads both at each round
+says whether a capture into it counts. A player's in-game name is the
+player entity's `m_szNeoName`, which holds the `neo_name` the player set
+and is empty while they set none (upstream at `bea96408`,
+`src/game/server/neo/neo_player.cpp:81`, `:1792-1810`). The player
+resource carries a `m_szNeoName` array too, but it holds the name as
+`GetNeoPlayerName` returns it: the Steam name for a player who set no neo
+name or turned neo names off, and a duplicate suffix such as `(2)`
+(`src/game/server/player_resource.cpp:159-171`,
+`src/game/server/neo/neo_player.cpp:1740-1771`). The roster therefore
+takes the entity's property, and credits each change to the connection
+that held the entity slot at that tick. `rounds` reads both at each round
 end. The server sends both entities to every client whatever their
 position (upstream `src/game/shared/gamerules.cpp:102-106` and
 `src/game/shared/neo/neo_ghost_cap_point.cpp:102-105`), so POV recordings

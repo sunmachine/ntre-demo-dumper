@@ -223,7 +223,7 @@ mod tests {
         for (uid, ent) in [(10, 1), (20, 2), (30, 3)] {
             players.insert(
                 uid,
-                Player { entity_id: ent, user_id: uid, name: String::new(), steam_id: String::new(), is_bot: false, first_seen_tick: 0 },
+                Player { entity_id: ent, user_id: uid, name: String::new(), steam_id: String::new(), is_bot: false, first_seen_tick: 0, neo_name: None },
             );
         }
         let kills = [Kill {

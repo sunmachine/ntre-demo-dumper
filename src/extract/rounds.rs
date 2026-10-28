@@ -14,7 +14,7 @@ use std::collections::HashMap;
 
 use super::announcements::Announcement;
 use super::entities::{CarrierChange, EntityOutput, PlayerSample, ZoneChange};
-use super::net::{Kill, Player, RoundResult};
+use super::net::{slot_holder, Kill, Player, RoundResult};
 
 pub struct Round {
     pub number: Option<i32>,
@@ -136,14 +136,7 @@ fn capturer(end_tick: i32, evidence: &Evidence) -> Option<u32> {
     };
     let carrier = [carrier_before(end + 1), carrier_before(end)].into_iter().find(|&e| e != 0)?;
 
-    // An entity slot passes to a later joiner when its player leaves, so the
-    // latest arrival at or before the end tick holds it.
-    evidence
-        .players
-        .values()
-        .filter(|p| p.entity_id == carrier && p.first_seen_tick <= end_tick)
-        .max_by_key(|p| (p.first_seen_tick, p.user_id))
-        .map(|p| p.user_id)
+    slot_holder(evidence.players, carrier, end_tick)
 }
 
 /// A round end from either source, normalized. `winner` is None only for a
@@ -384,6 +377,7 @@ mod tests {
             steam_id: String::new(),
             is_bot: false,
             first_seen_tick,
+            neo_name: None,
         };
         (user_id, p)
     }
