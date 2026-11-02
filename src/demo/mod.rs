@@ -6,6 +6,7 @@
 //! belongs in `crate::extract`.
 
 pub mod bits;
+pub mod clock;
 pub mod frames;
 pub mod header;
 pub mod identity;

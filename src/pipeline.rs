@@ -10,7 +10,7 @@ use std::io::IsTerminal;
 use std::path::Path;
 use std::time::Instant;
 
-use crate::demo::frames::FrameIter;
+use crate::demo::clock::Clock;
 use crate::demo::header::{DemoHeader, HEADER_SIZE};
 use crate::demo::identity::DemoIdentity;
 use crate::extract::{
@@ -102,9 +102,13 @@ pub fn parse_one(path: &Path, db: &Db, opts: &Options) -> Result<Outcome> {
 
     let mut logs: Vec<(LogLevel, String)> = Vec::new();
 
+    // Every pass reads its ticks from the server's clock, because a POV
+    // recording's frame headers carry the client's skewed clock.
+    let clock = Clock::new(&data, HEADER_SIZE, header.network_protocol);
+
     // A demo stopped mid-write can end partway through a frame; keep
     // everything extracted before the break and warn instead of failing.
-    for frame in FrameIter::new(&data, HEADER_SIZE) {
+    for frame in clock.frames(&data, HEADER_SIZE) {
         match frame {
             Ok(frame) => {
                 for extractor in &mut extractors {
@@ -120,7 +124,7 @@ pub fn parse_one(path: &Path, db: &Db, opts: &Options) -> Result<Outcome> {
 
     // Whole-file entity pass (all-player positions/aim/weapons); a failure
     // here degrades to a warning and never blocks the frame-level data.
-    let entity_output = match entities::run(&data) {
+    let entity_output = match entities::run(&data, &clock) {
         Ok(output) => Some(output),
         Err(e) => {
             logs.push((LogLevel::Warning, format!("entity pass failed: {e}")));

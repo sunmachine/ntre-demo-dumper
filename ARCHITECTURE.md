@@ -10,6 +10,7 @@ demo/       reads the on-disk format; knows nothing about gameplay
    │           identity.rs      SHA-256 of the file and the demo id taken from it
    │           header.rs        fixed 1072-byte HL2DEMO header (map, server, ticks)
    │           frames.rs        frame iterator: command, tick, payload, recorder POV
+   │           clock.rs         every frame's tick on the server's clock, from net_Tick
    │           bits.rs          LSB-first bit reader (Source bf_read semantics)
    │           usercmd.rs       dem_usercmd decode (stock SDK2013 wire format)
    │           net.rs           net-message framing + generic game-event parsing
@@ -74,6 +75,26 @@ exists in SDK 2013). Packet payloads are bit-packed net messages; alongside
 decoding them, `skim.rs` scans each payload at all 8 bit alignments for
 printable ASCII. Demos stopped mid-write can end a few bytes short of a full
 frame; this is treated as clean EOF.
+
+A frame header's tick is the recording client's tick. Every snapshot
+packet also carries the server's tick in a net_Tick message. In a SourceTV
+recording the two differ by a constant. In a POV recording the client
+keeps adjusting its clock to the server's, so the gap wanders by a tick or
+two, and some header ticks are skipped while others repeat. `clock.rs`
+therefore retimes every frame from the server tick, shifted by the most
+common gap, and the frame walk and the entity pass both read their ticks
+from it. A packet can carry reliable messages ahead of its snapshot, so the
+net_Tick is looked for anywhere in the packet. Measured with a probe build
+on two recordings:
+
+| recording | server minus header tick | repeated header ticks | repeated server ticks |
+|---|---|---|---|
+| 2026-09-25 SourceTV | 12408 on every snapshot | 0 | 0 |
+| 2026-08-24 POV | 1744 on 97469, 1743 on 18835, 1742 on 28 | 719 | 0 |
+
+On the POV recording the repeated header ticks had produced 1890 pairs of
+`player_samples` rows for one entity on one tick, which the server clock
+removes. On 32 SourceTV recordings every table's ticks are unchanged by it.
 
 ## Net-message layer
 

@@ -63,6 +63,8 @@ pub struct ServerInfo {
 
 /// Messages surfaced to the caller; everything else is validated and skipped.
 pub enum NetMessage {
+    /// net_Tick: the server tick of the snapshot the packet carries.
+    Tick(u32),
     ServerInfo(ServerInfo),
     /// net_SetConVar: replicated convar name/value pairs, in wire order.
     SetConVar(Vec<(String, String)>),
@@ -102,7 +104,9 @@ pub fn walk_packet(
             }
             3 => {
                 // net_Tick: tick + host frametime/stddev
-                r.skip_bits(32 + 16 + 16)?;
+                let tick = r.read_bits(32)?;
+                r.skip_bits(16 + 16)?;
+                sink(NetMessage::Tick(tick));
             }
             4 => {
                 r.read_string()?; // net_StringCmd
