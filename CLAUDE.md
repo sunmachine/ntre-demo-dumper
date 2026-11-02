@@ -71,8 +71,8 @@ finish.
 
 ## Working method
 
-- One piece of work per session, two at most. A session starts by reading
-  `ARCHITECTURE.md` and ends with a record of what changed.
+- A session starts by reading `ARCHITECTURE.md` and ends with a record of
+  what changed.
 - The orchestrating model directs, reviews every diff, runs the checks
   itself and verifies every claim a subagent makes against the code or the
   demo before repeating it. Mechanical work with a precise brief goes to a
