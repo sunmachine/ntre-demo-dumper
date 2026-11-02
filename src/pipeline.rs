@@ -160,6 +160,13 @@ pub fn parse_one(path: &Path, db: &Db, opts: &Options) -> Result<Outcome> {
         .as_ref()
         .map(|output| alive::counts(&output.resource_samples, &net.deaths, &net.players, &rounds))
         .unwrap_or_default();
+    // Tables that name a player by entity slot also store the Steam ID of
+    // whoever held the slot at the row's tick.
+    let owners = net::SlotOwners::new(&net.players);
+    let recorder_steamid = server_info
+        .as_ref()
+        .and_then(|s| owners.steamid_at(u32::from(s.player_slot) + 1, 0))
+        .map(str::to_string);
     let mut extractors: Vec<&mut dyn FrameExtractor> =
         vec![&mut announcements, &mut pov, &mut console, &mut inputs, &mut net];
 
@@ -170,6 +177,7 @@ pub fn parse_one(path: &Path, db: &Db, opts: &Options) -> Result<Outcome> {
         &path.display().to_string(),
         &header,
         server_info.as_ref(),
+        recorder_steamid.as_deref(),
         opts.last_round,
     )?;
     let mut summary = Vec::new();
@@ -179,11 +187,11 @@ pub fn parse_one(path: &Path, db: &Db, opts: &Options) -> Result<Outcome> {
     db.insert_rounds(demo_id, &rounds, &|userid| net.steamid_of(userid))?;
     summary.push(("rounds".into(), rounds.len()));
     if let Some(output) = &entity_output {
-        db.insert_player_samples(demo_id, &output.samples)?;
+        db.insert_player_samples(demo_id, &output.samples, &owners)?;
         db.insert_ghost_samples(demo_id, &output.ghost_samples)?;
-        db.insert_player_resource(demo_id, &output.resource_samples)?;
-        db.insert_attacker_hits(demo_id, &output.damage_samples)?;
-        db.insert_inferred_hits(demo_id, &hits)?;
+        db.insert_player_resource(demo_id, &output.resource_samples, &owners)?;
+        db.insert_attacker_hits(demo_id, &output.damage_samples, &owners)?;
+        db.insert_inferred_hits(demo_id, &hits, &owners)?;
         db.insert_alive_counts(demo_id, &alive_counts)?;
         summary.push(("player samples".into(), output.samples.len()));
         summary.push(("ghost samples".into(), output.ghost_samples.len()));
