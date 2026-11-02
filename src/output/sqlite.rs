@@ -172,6 +172,8 @@ CREATE TABLE IF NOT EXISTS deaths (
     id INTEGER PRIMARY KEY,
     demo_id INTEGER NOT NULL REFERENCES demos(id),
     tick INTEGER NOT NULL,
+    round_number INTEGER,             -- joins rounds.round_number; NULL before the first round
+    post_round INTEGER NOT NULL,      -- 1 after the round ended, before the next one began
     victim_steamid TEXT,              -- joins players.steamid; NULL if not in the roster
     victim_userid INTEGER NOT NULL,   -- connection id; joins players.userid
     victim_name TEXT,                 -- resolved at parse time; NULL if unknown
@@ -614,16 +616,18 @@ impl Db {
         steamid_of: SteamIdOf,
     ) -> Result<()> {
         let mut ins = self.conn.prepare(
-            "INSERT INTO deaths (demo_id, tick, victim_steamid, victim_userid, victim_name,
-                                 attacker_steamid, attacker_userid, attacker_name,
-                                 assister_steamid, assists, weapon, headshot, suicide, explosive,
-                                 ghoster)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+            "INSERT INTO deaths (demo_id, tick, round_number, post_round, victim_steamid,
+                                 victim_userid, victim_name, attacker_steamid, attacker_userid,
+                                 attacker_name, assister_steamid, assists, weapon, headshot, suicide,
+                                 explosive, ghoster)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
         )?;
         for k in deaths {
             ins.execute(rusqlite::params![
                 demo_id,
                 k.tick,
+                k.round_number,
+                k.post_round,
                 steamid_of(k.victim_userid),
                 k.victim_userid,
                 name_of(k.victim_userid),
@@ -1026,8 +1030,8 @@ mod tests {
             .conn
             .prepare(
                 "INSERT INTO deaths (demo_id, tick, victim_userid, attacker_userid, assists,
-                                     weapon, headshot, suicide, explosive, ghoster)
-                 VALUES (?1, ?2, 2, 3, 0, 'srm', 0, 0, 0, 0)",
+                                     weapon, headshot, suicide, explosive, ghoster, post_round)
+                 VALUES (?1, ?2, 2, 3, 0, 'srm', 0, 0, 0, 0, 0)",
             )
             .unwrap();
         for (demo_id, tick) in [(cut, 99), (cut, 100), (other, 100)] {

@@ -378,6 +378,41 @@ pub fn cut_after(rounds: &mut Vec<Round>, last: i32) -> Result<Option<i32>> {
     Ok(Some(cut))
 }
 
+/// The round a tick belongs to, as `place` finds it.
+#[derive(Debug, PartialEq)]
+pub struct RoundPlace {
+    /// The round's number, as in `Round::number`.
+    pub number: Option<i32>,
+    /// The tick falls after the round's end and before the next round's
+    /// start, while the game shows the result.
+    pub post_round: bool,
+}
+
+/// Where `tick` falls among `rounds`, which `derive` returns in tick order.
+/// None means the tick comes before the first round began.
+///
+/// A round covers its start tick through its end tick. The death that ends
+/// an elimination round lands on the end tick or just before it, so it
+/// counts as part of the round. A round with no recorded start covers everything after the
+/// round before it, and a round that never ended runs until the next start.
+/// The time between a round's end and the next start is that round's post
+/// round.
+pub fn place(rounds: &[Round], tick: i32) -> Option<RoundPlace> {
+    // The last tick round `i` covers before its post round, if bounded.
+    let last_tick = |i: usize| {
+        rounds[i].end_tick.or_else(|| rounds.get(i + 1).and_then(|r| r.start_tick).map(|s| s - 1))
+    };
+    let current = (0..rounds.len()).find(|&i| last_tick(i).is_none_or(|last| tick <= last));
+    let previous = match current {
+        Some(i) if rounds[i].start_tick.is_none_or(|start| start <= tick) => {
+            return Some(RoundPlace { number: rounds[i].number, post_round: false });
+        }
+        Some(i) => i.checked_sub(1)?,
+        None => rounds.len().checked_sub(1)?,
+    };
+    Some(RoundPlace { number: rounds[previous].number, post_round: true })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -447,6 +482,8 @@ mod tests {
             suicide: false,
             explosive: false,
             ghoster: false,
+            round_number: None,
+            post_round: false,
         }
     }
 
@@ -707,6 +744,45 @@ mod tests {
         assert_eq!(cut_after(&mut rounds, 3).unwrap(), None);
         assert_eq!(rounds.len(), 4);
         assert_eq!(cut_after(&mut rounds, 9).unwrap(), None);
+    }
+
+    fn at(rounds: &[Round], tick: i32) -> Option<(i32, bool)> {
+        place(rounds, tick).map(|p| (p.number.unwrap(), p.post_round))
+    }
+
+    #[test]
+    fn place_puts_end_ticks_in_the_round_and_the_gap_after_it_in_post_round() {
+        let rounds = rounds_with_restart();
+        assert_eq!(at(&rounds, 5), None);
+        assert_eq!(at(&rounds, 10), Some((1, false)));
+        assert_eq!(at(&rounds, 90), Some((1, false)));
+        assert_eq!(at(&rounds, 91), Some((1, true)));
+        assert_eq!(at(&rounds, 99), Some((1, true)));
+        assert_eq!(at(&rounds, 190), Some((2, false)));
+        assert_eq!(at(&rounds, 195), Some((2, true)));
+        assert_eq!(at(&rounds, 200), Some((3, false)));
+    }
+
+    #[test]
+    fn place_runs_an_aborted_round_until_its_restart() {
+        let rounds = rounds_with_restart();
+        assert_eq!(place(&rounds, 149), Some(RoundPlace { number: Some(2), post_round: false }));
+        assert_eq!(at(&rounds, 150), Some((2, false)));
+        // The last round never ended, so it runs to the end of the demo.
+        assert_eq!(at(&rounds, 9000), Some((3, false)));
+    }
+
+    #[test]
+    fn place_gives_a_round_without_a_start_everything_before_its_end() {
+        let anns = [ann(100, "- CTG ROUND 2 STARTED -")];
+        let results = [res(50, "nsf", "TIE"), res(190, "jinrai", "TIE")];
+        let rounds = derive_without_entities(&anns, &results);
+        assert_eq!(at(&rounds, 0), Some((1, false)));
+        assert_eq!(at(&rounds, 50), Some((1, false)));
+        assert_eq!(at(&rounds, 60), Some((1, true)));
+        assert_eq!(at(&rounds, 100), Some((2, false)));
+        assert_eq!(at(&rounds, 300), Some((2, true)));
+        assert_eq!(place(&[], 300), None);
     }
 
     #[test]

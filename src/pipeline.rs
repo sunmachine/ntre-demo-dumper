@@ -154,6 +154,7 @@ pub fn parse_one(path: &Path, db: &Db, opts: &Options) -> Result<Outcome> {
         Some(last) => rounds::cut_after(&mut rounds, last)?,
         None => None,
     };
+    net.place_deaths(&rounds);
     let mut extractors: Vec<&mut dyn FrameExtractor> =
         vec![&mut announcements, &mut pov, &mut console, &mut inputs, &mut net];
 

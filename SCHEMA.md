@@ -272,6 +272,8 @@ rows have no killer, and `ghoster` describes the victim too.
 | column | meaning |
 |---|---|
 | `tick` | when the player died |
+| `round_number` | the round the death fell in, as in `rounds.round_number`; join on it with `demo_id`. NULL before the first round began, as in warmup |
+| `post_round` | 1 when the death fell after its round ended and before the next round began, while the result is on screen |
 | `victim_steamid`, `attacker_steamid`, `assister_steamid` | the players' Steam IDs, looked up in the roster at parse time; join `players.steamid`. NULL for the attacker of a world death, for the assister when nobody assisted, and for a player missing from the roster |
 | `victim_userid`, `attacker_userid` | connection ids from the event's `userid` and `attacker` fields; join `players.userid`; attacker 0 = world/environment |
 | `victim_name`, `attacker_name` | resolved at parse time; NULL if unknown |
@@ -290,6 +292,31 @@ every world death, because the game sets it whenever the killer is not a
 player (`:4413`). `headshot` reports the last body part hit before the
 death (`:4412`), so on a world death it describes an earlier hit and not
 the death.
+
+A round runs from its start tick through its end tick. The death that ends
+an elimination round lands on the end tick or just before it, so it
+counts in the round with `post_round` 0. Across 33 recordings dated
+2026-03-19 to 2026-10-24:
+
+| elimination rounds | count |
+|---|---|
+| with a death on the end tick | 233 |
+| with the last death 1 tick before the end tick | 1 |
+| with a death 1 to 3 ticks after the end tick | 0 |
+
+The query behind the table lists each death near an elimination round's
+end with its offset:
+
+```sql
+SELECT r.round_number, d.tick - r.end_tick
+FROM rounds r JOIN deaths d ON d.demo_id = r.demo_id
+WHERE r.win_reason = 'elimination'
+  AND d.tick BETWEEN r.end_tick - 3 AND r.end_tick + 3;
+```
+
+A round with no recorded start, because the recording began during it,
+takes every death before its end. A round aborted by an admin pause runs
+until its restart, and both carry the same `round_number`.
 
 Apart from world deaths and deaths nobody assisted, every userid in a row
 should have a roster row. The dumper warns at parse time when a death names
