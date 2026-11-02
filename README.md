@@ -89,8 +89,8 @@ docker run --rm -v "$PWD":/workspace -w /workspace \
 
 ```sh
 distrobox assemble create --file distrobox.ini
-distrobox enter ntre-dev -- cargo build --release
-distrobox enter ntre-dev -- cargo test
+distrobox enter demo-parser -- cargo build --release
+distrobox enter demo-parser -- cargo test
 ```
 
 On a mutable host, plain `cargo build --release` works; the only system
