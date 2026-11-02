@@ -383,6 +383,10 @@ pub fn cut_after(rounds: &mut Vec<Round>, last: i32) -> Result<Option<i32>> {
 pub struct RoundPlace {
     /// The round's number, as in `Round::number`.
     pub number: Option<i32>,
+    /// The round's position in the demo's rounds, counting from 1. The
+    /// number repeats when a round restarts after an admin pause or a match
+    /// restart, so this is the key that names one round.
+    pub index: u32,
     /// The tick falls after the round's end and before the next round's
     /// start, while the game shows the result.
     pub post_round: bool,
@@ -405,12 +409,17 @@ pub fn place(rounds: &[Round], tick: i32) -> Option<RoundPlace> {
     let current = (0..rounds.len()).find(|&i| last_tick(i).is_none_or(|last| tick <= last));
     let previous = match current {
         Some(i) if rounds[i].start_tick.is_none_or(|start| start <= tick) => {
-            return Some(RoundPlace { number: rounds[i].number, post_round: false });
+            return Some(RoundPlace { number: rounds[i].number, index: ordinal(i), post_round: false });
         }
         Some(i) => i.checked_sub(1)?,
         None => rounds.len().checked_sub(1)?,
     };
-    Some(RoundPlace { number: rounds[previous].number, post_round: true })
+    Some(RoundPlace { number: rounds[previous].number, index: ordinal(previous), post_round: true })
+}
+
+/// The 1-based position stored as `rounds.round_index` for `rounds[i]`.
+pub fn ordinal(i: usize) -> u32 {
+    u32::try_from(i + 1).unwrap_or(u32::MAX)
 }
 
 #[cfg(test)]
@@ -483,6 +492,7 @@ mod tests {
             explosive: false,
             ghoster: false,
             round_number: None,
+            round_index: None,
             post_round: false,
             victim_team: None,
             attacker_team: None,
@@ -767,9 +777,19 @@ mod tests {
     }
 
     #[test]
+    fn place_gives_a_restarted_round_its_own_index() {
+        // Round 2 is aborted at its start and restarted, so its number
+        // repeats while the index does not.
+        let rounds = rounds_with_restart();
+        let indices: Vec<_> =
+            [10, 120, 150, 200].iter().map(|&t| place(&rounds, t).map(|p| (p.number, p.index))).collect();
+        assert_eq!(indices, [Some((Some(1), 1)), Some((Some(2), 2)), Some((Some(2), 3)), Some((Some(3), 4))]);
+    }
+
+    #[test]
     fn place_runs_an_aborted_round_until_its_restart() {
         let rounds = rounds_with_restart();
-        assert_eq!(place(&rounds, 149), Some(RoundPlace { number: Some(2), post_round: false }));
+        assert_eq!(place(&rounds, 149), Some(RoundPlace { number: Some(2), index: 2, post_round: false }));
         assert_eq!(at(&rounds, 150), Some((2, false)));
         // The last round never ended, so it runs to the end of the demo.
         assert_eq!(at(&rounds, 9000), Some((3, false)));

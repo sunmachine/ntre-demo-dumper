@@ -25,12 +25,16 @@ use super::rounds::{place, Round};
 pub struct GhostHold {
     /// When the player took the ghost.
     pub tick: u32,
-    /// The first tick they no longer held it, or their round's end tick if
-    /// that came first; None when they still held it in a round the
-    /// recording cut off.
+    /// The last tick of the hold, which still counts as held: the tick the
+    /// property moved off the player, or their round's end tick if that
+    /// came first. A carrier's death lands on this tick while the game's
+    /// own `ghoster` flag still names them. None when they still held it in
+    /// a round the recording cut off.
     pub end_tick: Option<u32>,
     /// The round the hold began in, as `rounds::place` finds it.
     pub round_number: Option<i32>,
+    /// That round's position in the demo, as `rounds.round_index`.
+    pub round_index: Option<u32>,
     pub entity_id: u32,
     /// The connection holding the slot when the hold began.
     pub userid: Option<u32>,
@@ -65,17 +69,19 @@ pub fn holds(changes: &[CarrierChange], players: &HashMap<u32, Player>, rounds: 
 fn raw_holds(changes: &[CarrierChange], players: &HashMap<u32, Player>, rounds: &[Round]) -> Vec<GhostHold> {
     let mut out: Vec<GhostHold> = Vec::new();
     for change in changes {
-        // A change ends the open hold, whether the ghost was dropped or
-        // passed straight to another player on the same tick.
+        // A change ends the open hold on its own tick, whether the ghost was
+        // dropped or passed straight to another player on the same tick.
         if let Some(open) = out.last_mut().filter(|h| h.end_tick.is_none()) {
             open.end_tick = Some(change.tick);
         }
         if change.entity_id != 0 {
             let tick = i32::try_from(change.tick).unwrap_or(i32::MAX);
+            let round = place(rounds, tick);
             out.push(GhostHold {
                 tick: change.tick,
                 end_tick: None,
-                round_number: place(rounds, tick).and_then(|p| p.number),
+                round_number: round.as_ref().and_then(|p| p.number),
+                round_index: round.map(|p| p.index),
                 entity_id: change.entity_id,
                 userid: slot_holder(players, change.entity_id, tick),
             });
@@ -107,6 +113,35 @@ mod tests {
 
     fn rows(holds: &[GhostHold]) -> Vec<(u32, Option<u32>, Option<i32>, u32, Option<u32>)> {
         holds.iter().map(|h| (h.tick, h.end_tick, h.round_number, h.entity_id, h.userid)).collect()
+    }
+
+    fn round(number: i32, start_tick: Option<i32>, end_tick: Option<i32>) -> Round {
+        Round { number: Some(number), start_tick, end_tick, winner: None, reason: None, capturer_userid: None }
+    }
+
+    #[test]
+    fn a_round_without_a_recorded_start_still_caps_its_holds() {
+        // The recording begins during round 1, which ends at 300.
+        let players = HashMap::from([player(11, 4)]);
+        let rounds = [round(1, None, Some(300)), round(2, Some(1300), None)];
+        let changes = [change(100, 4), change(1300, 0)];
+        let holds = holds(&changes, &players, &rounds);
+        assert_eq!(rows(&holds), [(100, Some(300), Some(1), 4, Some(11))]);
+        assert_eq!(holds[0].round_index, Some(1));
+    }
+
+    #[test]
+    fn a_hold_in_an_aborted_round_ends_at_the_restart() {
+        // Round 2 is aborted without a result and restarts at 400, which
+        // resets the property.
+        let players = HashMap::from([player(11, 4)]);
+        let rounds = [round(1, Some(10), Some(90)), round(2, Some(100), None), round(2, Some(400), Some(900))];
+        let changes = [change(200, 4), change(400, 0), change(500, 4), change(600, 0)];
+        let holds = holds(&changes, &players, &rounds);
+        assert_eq!(rows(&holds), [(200, Some(400), Some(2), 4, Some(11)), (500, Some(600), Some(2), 4, Some(11))]);
+        // The two rounds share a number but not an index.
+        let indices: Vec<_> = holds.iter().map(|h| h.round_index).collect();
+        assert_eq!(indices, [Some(2), Some(3)]);
     }
 
     #[test]

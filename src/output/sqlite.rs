@@ -141,7 +141,8 @@ CREATE TABLE IF NOT EXISTS alive_counts (
     id INTEGER PRIMARY KEY,
     demo_id INTEGER NOT NULL REFERENCES demos(id),
     tick INTEGER NOT NULL,
-    round_number INTEGER,          -- joins rounds.round_number; NULL before the first round
+    round_number INTEGER,          -- as in rounds.round_number; NULL before the first round
+    round_index INTEGER,           -- joins rounds.round_index; NULL before the first round
     team INTEGER NOT NULL,         -- 2 Jinrai, 3 NSF
     alive INTEGER NOT NULL         -- players on the team alive from this tick on
 );
@@ -190,7 +191,8 @@ CREATE TABLE IF NOT EXISTS deaths (
     id INTEGER PRIMARY KEY,
     demo_id INTEGER NOT NULL REFERENCES demos(id),
     tick INTEGER NOT NULL,
-    round_number INTEGER,             -- joins rounds.round_number; NULL before the first round
+    round_number INTEGER,             -- as in rounds.round_number; NULL before the first round
+    round_index INTEGER,              -- joins rounds.round_index; NULL before the first round
     post_round INTEGER NOT NULL,      -- 1 after the round ended, before the next one began
     victim_steamid TEXT,              -- joins players.steamid; NULL if not in the roster
     victim_userid INTEGER NOT NULL,   -- connection id; joins players.userid
@@ -234,8 +236,9 @@ CREATE TABLE IF NOT EXISTS ghost_holds (
     id INTEGER PRIMARY KEY,
     demo_id INTEGER NOT NULL REFERENCES demos(id),
     tick INTEGER NOT NULL,         -- when the player took the ghost
-    end_tick INTEGER,              -- first tick they no longer held it, at most the round end
-    round_number INTEGER,          -- joins rounds.round_number; NULL before the first round
+    end_tick INTEGER,              -- last tick held, inclusive; at most the round end
+    round_number INTEGER,          -- as in rounds.round_number; NULL before the first round
+    round_index INTEGER,           -- joins rounds.round_index; NULL before the first round
     entity_id INTEGER NOT NULL,    -- the holder's slot; joins players.entity_id
     steamid TEXT,                  -- joins players.steamid
     userid INTEGER                 -- connection id; joins players.userid
@@ -391,7 +394,8 @@ CREATE TABLE IF NOT EXISTS announcements (
 CREATE TABLE IF NOT EXISTS rounds (
     id INTEGER PRIMARY KEY,
     demo_id INTEGER NOT NULL REFERENCES demos(id),
-    round_number INTEGER,
+    round_number INTEGER,          -- as announced; repeats when a round restarts
+    round_index INTEGER NOT NULL,  -- position in the demo from 1; the key to join on
     start_tick INTEGER,
     end_tick INTEGER,
     winner TEXT, -- jinrai, nsf or tie, as round_results.team sends it; NULL if the round never ended
@@ -566,14 +570,15 @@ impl Db {
 
     pub fn insert_rounds(&self, demo_id: i64, rounds: &[Round], steamid_of: SteamIdOf) -> Result<()> {
         let mut ins = self.conn.prepare(
-            "INSERT INTO rounds (demo_id, round_number, start_tick, end_tick, winner, win_reason,
-                                 capturer_steamid, capturer_userid)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            "INSERT INTO rounds (demo_id, round_number, round_index, start_tick, end_tick, winner,
+                                 win_reason, capturer_steamid, capturer_userid)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         )?;
-        for r in rounds {
+        for (i, r) in rounds.iter().enumerate() {
             ins.execute(rusqlite::params![
                 demo_id,
                 r.number,
+                crate::extract::rounds::ordinal(i),
                 r.start_tick,
                 r.end_tick,
                 r.winner,
@@ -659,19 +664,20 @@ impl Db {
         steamid_of: SteamIdOf,
     ) -> Result<()> {
         let mut ins = self.conn.prepare(
-            "INSERT INTO deaths (demo_id, tick, round_number, post_round, victim_steamid,
-                                 victim_userid, victim_name, victim_team, attacker_steamid,
-                                 attacker_userid, attacker_name, attacker_team, assister_steamid,
-                                 assists, assister_team, weapon, headshot, suicide, explosive,
-                                 ghoster)
+            "INSERT INTO deaths (demo_id, tick, round_number, round_index, post_round,
+                                 victim_steamid, victim_userid, victim_name, victim_team,
+                                 attacker_steamid, attacker_userid, attacker_name, attacker_team,
+                                 assister_steamid, assists, assister_team, weapon, headshot,
+                                 suicide, explosive, ghoster)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17,
-                     ?18, ?19, ?20)",
+                     ?18, ?19, ?20, ?21)",
         )?;
         for k in deaths {
             ins.execute(rusqlite::params![
                 demo_id,
                 k.tick,
                 k.round_number,
+                k.round_index,
                 k.post_round,
                 steamid_of(k.victim_userid),
                 k.victim_userid,
@@ -914,9 +920,9 @@ impl Db {
         owners: &SlotOwners,
     ) -> Result<()> {
         let mut ins = self.conn.prepare(
-            "INSERT INTO ghost_holds (demo_id, tick, end_tick, round_number, entity_id, steamid,
-                                      userid)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO ghost_holds (demo_id, tick, end_tick, round_number, round_index, entity_id,
+                                      steamid, userid)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         )?;
         for h in holds {
             ins.execute(rusqlite::params![
@@ -924,6 +930,7 @@ impl Db {
                 h.tick,
                 h.end_tick,
                 h.round_number,
+                h.round_index,
                 h.entity_id,
                 owners.steamid_at(h.entity_id, i64::from(h.tick)),
                 h.userid,
@@ -938,11 +945,18 @@ impl Db {
         counts: &[crate::extract::alive::AliveCount],
     ) -> Result<()> {
         let mut ins = self.conn.prepare(
-            "INSERT INTO alive_counts (demo_id, tick, round_number, team, alive)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO alive_counts (demo_id, tick, round_number, round_index, team, alive)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         )?;
         for c in counts {
-            ins.execute(rusqlite::params![demo_id, c.tick, c.round_number, c.team, c.alive])?;
+            ins.execute(rusqlite::params![
+                demo_id,
+                c.tick,
+                c.round_number,
+                c.round_index,
+                c.team,
+                c.alive,
+            ])?;
         }
         Ok(())
     }

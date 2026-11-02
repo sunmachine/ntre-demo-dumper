@@ -30,6 +30,8 @@ pub struct Death {
     /// The round the death fell in, set by `NetPass::place_deaths` once the
     /// rounds are derived; None before the first round began.
     pub round_number: Option<i32>,
+    /// The position of that round in the demo, as `rounds.round_index`.
+    pub round_index: Option<u32>,
     /// The death fell after its round ended and before the next one began.
     pub post_round: bool,
     /// The teams of the victim, attacker and assister at the death, set by
@@ -374,6 +376,7 @@ impl NetPass {
         for d in &mut self.deaths {
             let round = place(rounds, d.tick);
             d.round_number = round.as_ref().and_then(|r| r.number);
+            d.round_index = round.as_ref().map(|r| r.index);
             d.post_round = round.is_some_and(|r| r.post_round);
         }
     }
@@ -428,6 +431,7 @@ impl NetPass {
                 explosive: bool_field(fields, "explosive"),
                 ghoster: bool_field(fields, "ghoster"),
                 round_number: None,
+                round_index: None,
                 post_round: false,
                 victim_team: None,
                 attacker_team: None,
@@ -753,6 +757,7 @@ mod tests {
             explosive: false,
             ghoster: false,
             round_number: None,
+            round_index: None,
             post_round: false,
             victim_team: None,
             attacker_team: None,

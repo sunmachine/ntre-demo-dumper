@@ -22,6 +22,8 @@ extract/    turns frames into gameplay facts; does no I/O during extraction
    │           rounds.rs         rounds from start markers, round results and entity state
    │           pov.rs            recorder position/angles per packet frame
    │           console.rs        recorder console commands
+   │           alive.rs          living players per team, from the player resource
+   │           ghost_holds.rs    ghost possession, from the game rules proxy
    ▼
 output/     persists facts; all SQL lives here
                sqlite.rs   schema + insert_* methods, one demo per transaction
@@ -32,6 +34,11 @@ that touches all three layers: read file → walk frames → run extractors →
 persist. Neither contains parsing or SQL logic. Rounds are derived in the
 pipeline after the entity pass, because the ghost capturer comes from
 entity state, and are written in the same transaction as the rest.
+`alive.rs` and `ghost_holds.rs` are derived the same way, from the entity
+pass's output and the rounds, rather than as frame extractors. Every table
+that places a row in a round stores the round's `round_index`, its position
+in the demo, because a round's announced number repeats after a pause or a
+match restart.
 `--last-round` cuts the demo after the rounds are derived. Every pass still
 reads the whole file, and the pipeline then deletes the rows from the next
 round's start tick on, in that same transaction (`Db::cut_at`).
