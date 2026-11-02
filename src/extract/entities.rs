@@ -69,6 +69,8 @@ pub struct DamageSample {
 pub struct ResourceSample {
     pub tick: u32,
     pub entity_id: u32,
+    /// `m_iTeam`, coded as `PlayerSample::team`.
+    pub team: i64,
     pub xp: i64,
     pub score: i64,
     pub deaths: i64,
@@ -158,6 +160,7 @@ struct PlayerState {
 
 #[derive(Default, Clone)]
 struct ResourceState {
+    team: i64,
     xp: i64,
     score: i64,
     deaths: i64,
@@ -510,6 +513,7 @@ impl EntityAnalyser {
                 "m_iScore" => &mut entry.score,
                 "m_iDeaths" => &mut entry.deaths,
                 "m_iPing" => &mut entry.ping,
+                "m_iTeam" => &mut entry.team,
                 _ => continue,
             };
             if *field != *v {
@@ -524,6 +528,7 @@ impl EntityAnalyser {
             self.resource_samples.push(ResourceSample {
                 tick,
                 entity_id: slot,
+                team: s.team,
                 xp: s.xp,
                 score: s.score,
                 deaths: s.deaths,
