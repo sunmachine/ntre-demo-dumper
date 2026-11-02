@@ -80,6 +80,6 @@ finish.
 - Investigations write their scratch files, tools and databases outside the
   tree. A branch carries only the change under review.
 - On the Linux workstation every toolchain step runs in the dev container:
-  `distrobox enter ntre-dev -- cargo build --release` (container defined in
+  `distrobox enter demo-parser -- cargo build --release` (container defined in
   `distrobox.ini`) or the Dev Container in `.devcontainer/`. The host runs
   only the built binary.
