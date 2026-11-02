@@ -92,6 +92,7 @@ rows are recomputed on every parse and may change when a rule improves.
 | `attacker_hits` | event log | SourceTV only, pre-July-2026 builds | `steamid` |
 | `player_pings` | event log | POV only | `steamid` |
 | `ghost_callouts` | event log | POV only | `steamid`, `userid` (bots only) |
+| `ghost_holds` | event log | | `steamid` |
 | `team_scores` | event log | POV only | none (per team) |
 | `team_changes` | event log | | `steamid` |
 | `rank_changes` | event log | POV only | `steamid` |
@@ -209,9 +210,10 @@ In POV demos, players well out of the recorder's sight produce no rows.
 
 The ghost entity's own position over time (on-change). Reliable while the
 ghost is dropped or in the world; while a player carries it, track the
-carrier instead via `player_samples` rows with `weapon = 'ghost'`. The
-carrier can holster the ghost, so a carrier may show another weapon. The
-`entity_id` is the ghost entity, not a player. Columns: `tick`, `entity_id`,
+carrier instead: `ghost_holds` names who held it, and their
+`player_samples` rows give the position. The carrier can holster the
+ghost, so `weapon = 'ghost'` misses part of a hold. The `entity_id` is the
+ghost entity, not a player. Columns: `tick`, `entity_id`,
 `x`, `y`, `z`.
 
 ### `player_resource`
@@ -349,7 +351,7 @@ rows have no killer, and `ghoster` describes the victim too.
 | `assists` | userid of the assisting player, or 0 for none; joins `players.userid` (NT;RE defines the event field as "user ID who assists") |
 | `weapon` | weapon's entity name without `weapon_`, e.g. `srm`; see Weapon reference below. A grenade or detpack kill's inflictor is mapped to the weapon that made it |
 | `headshot`, `suicide`, `explosive` | kill flags |
-| `ghoster` | 1 if the victim was carrying the ghost |
+| `ghoster` | 1 if the victim was carrying the ghost. After a round ends the game stops updating its carrier, so a post-round death can carry a stale 1; see `ghost_holds` |
 
 A world death is a death no player caused. Its `attacker_userid` is 0 and
 its `attacker_name` is NULL. The game then puts the class name of whatever
@@ -440,6 +442,43 @@ are present, not just the recorder's.
 | `team` | pinging player's team, coded as in `player_samples.team` |
 | `x`, `y`, `z` | pinged world position |
 | `ghoster_ping` | 1 when the pinging player carried the ghost or was the VIP |
+
+### `ghost_holds`
+
+Who held the ghost, one row per stretch a player held it. The game rules
+proxy's `m_iGhosterPlayer` names the ghost weapon's owner, whether or not
+the owner has it out, so this table covers the time a carrier spends on
+another weapon. The game sets the property from the owner on every think
+while the round is live (upstream at `bea96408`,
+`src/game/shared/neo/neo_gamerules.cpp:1414-1428`). The server sends the
+proxy to every client, so both recording types carry it.
+
+Once a round is over, the think returns before that update (`:1362-1404`)
+and the property keeps its last value until the next round resets it
+(`:3516-3522`). A hold still open at its round's end therefore ends at the
+round's end tick, and a pickup after the round ended has no row.
+
+| column | meaning |
+|---|---|
+| `tick` | when the player took the ghost |
+| `end_tick` | the first tick they no longer held it, or their round's end tick if that came first; NULL when the recording cut off the round |
+| `round_number` | the round the hold began in, as in `deaths.round_number` |
+| `entity_id` | the holder's slot; joins `players.entity_id` |
+| `steamid` | the holder; joins `players.steamid` |
+| `userid` | the holder's connection id; joins `players.userid` and tells bots apart |
+
+Measured on 33 recordings dated 2026-03-19 to 2026-10-24:
+
+| check | result |
+|---|---|
+| live `player_samples` rows with `weapon = 'ghost'` inside a round that fall in a hold | 512538 of 512544 |
+| capturers in `rounds` holding the ghost at the round's end tick | 37 of 37 |
+| deaths before their round ended with `ghoster` 1 that fall in the victim's hold | 82 of 82 |
+| live `player_samples` rows inside holds with another weapon out | 29593 of 585404 |
+
+The six samples outside a hold are in one POV recording, each on a round's
+start tick, where the respawned player's entity still shows the weapon of
+the round before.
 
 ### `ghost_callouts`
 
