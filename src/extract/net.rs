@@ -1,5 +1,5 @@
 //! Net-level extraction: walks the net-message stream inside signon/packet
-//! frames and produces the kill feed, chat, player roster, and a generic
+//! frames and produces the deaths, chat, player roster, and a generic
 //! game-events table (every event, fields as JSON). Game events are parsed
 //! against the demo's own definitions, so NT;RE-specific events (ghost
 //! captures, rank changes) decode without any hardcoded schema.
@@ -16,7 +16,7 @@ use crate::demo::stringtables::{parse_userinfo, parse_userinfo_update, PlayerInf
 use crate::extract::entities::NeoNameChange;
 use crate::output::sqlite::Db;
 
-pub struct Kill {
+pub struct Death {
     pub tick: i32,
     pub victim_userid: u32,
     pub attacker_userid: u32,
@@ -130,7 +130,7 @@ pub fn slot_holder(players: &HashMap<u32, Player>, entity_id: u32, tick: i32) ->
 pub struct NetPass {
     defs: EventDefs,
     pub events: Vec<(i32, String, String)>, // tick, name, fields as JSON
-    pub kills: Vec<Kill>,
+    pub deaths: Vec<Death>,
     pub pings: Vec<Ping>,
     pub callouts: Vec<GhostCallout>,
     pub team_scores: Vec<TeamScore>,
@@ -291,7 +291,7 @@ fn str_field(fields: &[(String, EventValue)], name: &str) -> String {
 /// `weapon` arrives as the projectile's own entity name. Map it to the
 /// weapon that threw or placed it; any other value, such as a world damage
 /// cause, passes through as the event sent it.
-fn kill_weapon(weapon: String) -> String {
+fn death_weapon(weapon: String) -> String {
     match weapon.as_str() {
         "neo_grenade_frag" => "grenade".to_string(),
         "neo_deployed_detpack" => "remotedet".to_string(),
@@ -323,12 +323,12 @@ impl NetPass {
         }
     }
 
-    /// How many kills name a victim, attacker or assister that the roster
+    /// How many deaths name a victim, attacker or assister that the roster
     /// never saw. Those rows get NULL names and Steam IDs. Userid 0 is the
     /// world as attacker and nobody as assister, so it does not count.
-    pub fn kills_missing_from_roster(&self) -> usize {
+    pub fn deaths_missing_from_roster(&self) -> usize {
         let missing = |userid: u32| userid != 0 && !self.players.contains_key(&userid);
-        self.kills
+        self.deaths
             .iter()
             .filter(|k| missing(k.victim_userid) || missing(k.attacker_userid) || missing(k.assists))
             .count()
@@ -336,12 +336,12 @@ impl NetPass {
 
     fn on_game_event(&mut self, tick: i32, name: &str, fields: &[(String, EventValue)]) {
         match name {
-            "player_death" => self.kills.push(Kill {
+            "player_death" => self.deaths.push(Death {
                 tick,
                 victim_userid: id_field(fields, "userid"),
                 attacker_userid: id_field(fields, "attacker"),
                 assists: id_field(fields, "assists"),
-                weapon: kill_weapon(str_field(fields, "weapon")),
+                weapon: death_weapon(str_field(fields, "weapon")),
                 headshot: bool_field(fields, "headshot"),
                 suicide: bool_field(fields, "suicide"),
                 explosive: bool_field(fields, "explosive"),
@@ -550,7 +550,7 @@ impl FrameExtractor for NetPass {
             self.players.get(&userid).map(|p| p.name.clone())
         };
         let steamid_of = |userid: u32| self.steamid_of(userid);
-        db.insert_kills(demo_id, &self.kills, &name_of, &steamid_of)?;
+        db.insert_deaths(demo_id, &self.deaths, &name_of, &steamid_of)?;
         db.insert_player_pings(demo_id, &self.pings, &steamid_of)?;
         db.insert_ghost_callouts(demo_id, &self.callouts, &steamid_of)?;
         db.insert_team_scores(demo_id, &self.team_scores)?;
@@ -563,7 +563,7 @@ impl FrameExtractor for NetPass {
         db.insert_server_cvars(demo_id, &self.cvars)?;
         let mut summary: Summary = vec![
             ("players".into(), self.players.len()),
-            ("kills".into(), self.kills.len()),
+            ("deaths".into(), self.deaths.len()),
             ("player pings".into(), self.pings.len()),
             ("ghost callouts".into(), self.callouts.len()),
             ("team scores".into(), self.team_scores.len()),
@@ -654,8 +654,8 @@ mod tests {
         }
     }
 
-    fn kill(victim_userid: u32, attacker_userid: u32, assists: u32) -> Kill {
-        Kill {
+    fn death(victim_userid: u32, attacker_userid: u32, assists: u32) -> Death {
+        Death {
             tick: 0,
             victim_userid,
             attacker_userid,
@@ -669,19 +669,19 @@ mod tests {
     }
 
     #[test]
-    fn kills_missing_from_roster_skip_the_world_and_no_assister() {
+    fn deaths_missing_from_roster_skip_the_world_and_no_assister() {
         let pass = NetPass {
             players: HashMap::from([(1, roster_player(1)), (2, roster_player(2))]),
-            kills: vec![
-                kill(1, 2, 0), // both players known, nobody assisted
-                kill(1, 0, 0), // world kill
-                kill(9, 2, 0), // victim unknown
-                kill(1, 9, 0), // attacker unknown
-                kill(1, 2, 9), // assister unknown
+            deaths: vec![
+                death(1, 2, 0), // both players known, nobody assisted
+                death(1, 0, 0), // world death
+                death(9, 2, 0), // victim unknown
+                death(1, 9, 0), // attacker unknown
+                death(1, 2, 9), // assister unknown
             ],
             ..NetPass::default()
         };
-        assert_eq!(pass.kills_missing_from_roster(), 3);
+        assert_eq!(pass.deaths_missing_from_roster(), 3);
     }
 
     fn neo_name(tick: u32, entity_id: u32, name: &str) -> NeoNameChange {

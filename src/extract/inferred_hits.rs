@@ -11,7 +11,7 @@
 use std::collections::HashMap;
 
 use super::entities::PlayerSample;
-use super::net::{Kill, Player};
+use super::net::{Death, Player};
 
 pub struct InferredHit {
     pub tick: u32,
@@ -36,8 +36,8 @@ pub const METHOD_NONE: &str = "none";
 const MAX_AIM_ERROR: f32 = 15.0;
 /// Confidence falls linearly from 1 at zero error to 0 at this angle.
 const FULL_ERROR: f32 = 20.0;
-/// Kill events land within this many ticks of the fatal health drop.
-const KILL_WINDOW: u32 = 4;
+/// Death events land within this many ticks of the fatal health drop.
+const DEATH_WINDOW: u32 = 4;
 /// Eye height above the player origin, and the aim point on a target.
 const EYE_Z: f32 = 64.0;
 const TARGET_Z: f32 = 40.0;
@@ -78,15 +78,15 @@ fn aim_error(attacker: &State, victim: &State) -> f32 {
     dot.clamp(-1.0, 1.0).acos().to_degrees()
 }
 
-/// Reconstruct hits from on-change samples (in tick order) and the kill feed.
-pub fn infer(samples: &[PlayerSample], kills: &[Kill], players: &HashMap<u32, Player>) -> Vec<InferredHit> {
+/// Reconstruct hits from on-change samples (in tick order) and the deaths.
+pub fn infer(samples: &[PlayerSample], deaths: &[Death], players: &HashMap<u32, Player>) -> Vec<InferredHit> {
     let entity_of: HashMap<u32, u32> = players.values().map(|p| (p.user_id, p.entity_id)).collect();
-    // Kills keyed by victim entity, in tick order, for fatal-hit matching.
-    let mut kills_by_victim: HashMap<u32, Vec<(u32, Option<u32>)>> = HashMap::new();
-    for k in kills {
+    // Deaths keyed by victim entity, in tick order, for fatal-hit matching.
+    let mut deaths_by_victim: HashMap<u32, Vec<(u32, Option<u32>)>> = HashMap::new();
+    for k in deaths {
         if let Some(&victim) = entity_of.get(&k.victim_userid) {
             let attacker = entity_of.get(&k.attacker_userid).copied().filter(|_| k.attacker_userid != 0);
-            kills_by_victim.entry(victim).or_default().push((k.tick as u32, attacker));
+            deaths_by_victim.entry(victim).or_default().push((k.tick as u32, attacker));
         }
     }
 
@@ -111,7 +111,7 @@ pub fn infer(samples: &[PlayerSample], kills: &[Kill], players: &HashMap<u32, Pl
                 let damage = prev.health - s.health;
                 let fatal = s.health <= 0 || !s.alive;
                 let hit = fatal
-                    .then(|| fatal_hit(s, damage, &kills_by_victim))
+                    .then(|| fatal_hit(s, damage, &deaths_by_victim))
                     .flatten()
                     .unwrap_or_else(|| aim_hit(s, damage, &prev, &state));
                 hits.push(hit);
@@ -125,10 +125,10 @@ pub fn infer(samples: &[PlayerSample], kills: &[Kill], players: &HashMap<u32, Pl
 fn fatal_hit(
     s: &PlayerSample,
     damage: i64,
-    kills_by_victim: &HashMap<u32, Vec<(u32, Option<u32>)>>,
+    deaths_by_victim: &HashMap<u32, Vec<(u32, Option<u32>)>>,
 ) -> Option<InferredHit> {
-    let kills = kills_by_victim.get(&s.entity_id)?;
-    let (_, attacker) = kills.iter().find(|(t, _)| t.abs_diff(s.tick) <= KILL_WINDOW)?;
+    let deaths = deaths_by_victim.get(&s.entity_id)?;
+    let (_, attacker) = deaths.iter().find(|(t, _)| t.abs_diff(s.tick) <= DEATH_WINDOW)?;
     Some(InferredHit {
         tick: s.tick,
         victim_entity_id: s.entity_id,
@@ -226,7 +226,7 @@ mod tests {
                 Player { entity_id: ent, user_id: uid, name: String::new(), steam_id: String::new(), is_bot: false, first_seen_tick: 0, neo_name: None },
             );
         }
-        let kills = [Kill {
+        let deaths = [Death {
             tick: 9,
             victim_userid: 20,
             attacker_userid: 30,
@@ -237,7 +237,7 @@ mod tests {
             explosive: false,
             ghoster: false,
         }];
-        let hits = infer(&samples, &kills, &players);
+        let hits = infer(&samples, &deaths, &players);
         assert_eq!(hits.len(), 2);
         assert_eq!((hits[0].attacker_entity_id, hits[0].damage, hits[0].method), (Some(1), 30, METHOD_AIM));
         assert!(hits[0].confidence > 0.8);

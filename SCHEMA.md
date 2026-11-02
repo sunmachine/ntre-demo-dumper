@@ -23,7 +23,7 @@ so if you add a column, document it.
   server or night. An `entity_id` is the player's slot in the entity list,
   used by `player_samples` and `chat.client_entity`. The `players` table
   holds all three and is the join hub:
-  `kills.victim_steamid = players.steamid`,
+  `deaths.victim_steamid = players.steamid`,
   `player_samples.entity_id = players.entity_id`.
 - **When `userid` is still needed.** Every bot's `steamid` is the literal
   `BOT`, so only `userid` tells two bots apart. The `userid` fields inside
@@ -80,7 +80,7 @@ rows are recomputed on every parse and may change when a rule improves.
 | `player_resource` | tick series | | `entity_id` |
 | `pov_samples` | tick series | | none (the recorder) |
 | `recorder_inputs` | tick series | POV only | none (the recorder) |
-| `kills` | event log | | `steamid` |
+| `deaths` | event log | | `steamid` |
 | `attacker_hits` | event log | SourceTV only, pre-July-2026 builds | `entity_id` |
 | `player_pings` | event log | POV only | `steamid` |
 | `ghost_callouts` | event log | POV only | `userid` (bots only), `entity_id` |
@@ -263,14 +263,16 @@ tick the key is tapped, and stays 0 for players on the default `+zoom` bind.
 Discrete happenings, one row each, mostly decoded from the demo's own game
 event definitions.
 
-### `kills`
+### `deaths`
 
-Kill feed from NT;RE's own `player_death` game event definition.
+One row per death, from NT;RE's own `player_death` game event definition.
+The table is named for the victim, because every row has one while some
+rows have no killer, and `ghoster` describes the victim too.
 
 | column | meaning |
 |---|---|
-| `tick` | when the kill happened |
-| `victim_steamid`, `attacker_steamid`, `assister_steamid` | the players' Steam IDs, looked up in the roster at parse time; join `players.steamid`. NULL for the attacker of a world kill, for the assister when nobody assisted, and for a player missing from the roster |
+| `tick` | when the player died |
+| `victim_steamid`, `attacker_steamid`, `assister_steamid` | the players' Steam IDs, looked up in the roster at parse time; join `players.steamid`. NULL for the attacker of a world death, for the assister when nobody assisted, and for a player missing from the roster |
 | `victim_userid`, `attacker_userid` | connection ids from the event's `userid` and `attacker` fields; join `players.userid`; attacker 0 = world/environment |
 | `victim_name`, `attacker_name` | resolved at parse time; NULL if unknown |
 | `assists` | userid of the assisting player, or 0 for none; joins `players.userid` (NT;RE defines the event field as "user ID who assists") |
@@ -278,20 +280,20 @@ Kill feed from NT;RE's own `player_death` game event definition.
 | `headshot`, `suicide`, `explosive` | kill flags |
 | `ghoster` | 1 if the victim was carrying the ghost |
 
-A world kill is a death no player caused. Its `attacker_userid` is 0 and
+A world death is a death no player caused. Its `attacker_userid` is 0 and
 its `attacker_name` is NULL. The game then puts the class name of whatever
 dealt the damage in `weapon` (upstream
 `src/game/shared/neo/neo_gamerules.cpp:4367`). `trigger_hurt` is a damage
 zone the map author placed, such as a pit or an out-of-bounds area.
 `worldspawn` is the map itself, as in a fatal fall. `suicide` is 1 on
-every world kill, because the game sets it whenever the killer is not a
+every world death, because the game sets it whenever the killer is not a
 player (`:4413`). `headshot` reports the last body part hit before the
-death (`:4412`), so on a world kill it describes an earlier hit and not the
-death.
+death (`:4412`), so on a world death it describes an earlier hit and not
+the death.
 
-Apart from world kills and kills nobody assisted, every userid in a kill
-should have a roster row. The dumper warns at parse time when a kill names
-a userid that the roster never saw. That kill's names and Steam IDs for the
+Apart from world deaths and deaths nobody assisted, every userid in a row
+should have a roster row. The dumper warns at parse time when a death names
+a userid that the roster never saw. That row's names and Steam IDs for the
 missing player are NULL, and the warning marks a roster gap worth
 reporting with the demo.
 
@@ -525,7 +527,7 @@ hits that `attacker_hits` never listed.
 
 ## Weapon reference
 
-`kills.weapon` and `player_samples.weapon` both hold the weapon's entity
+`deaths.weapon` and `player_samples.weapon` both hold the weapon's entity
 name without its `weapon_` prefix, as listed below. NULL means the weapon
 is unknown.
 The authoritative lists live in the NT;RE repo:
@@ -562,7 +564,7 @@ and are left out.
 
 ```sql
 SELECT attacker_steamid, count(*) AS kills
-FROM kills
+FROM deaths
 WHERE attacker_steamid IS NOT NULL AND attacker_steamid <> 'BOT'
 GROUP BY attacker_steamid
 ORDER BY kills DESC;
@@ -570,17 +572,17 @@ ORDER BY kills DESC;
 
 ## Example: heatmap query
 
-Kill positions for one player on one demo, by joining the kill feed to the
-victim's last known position:
+Death positions on one demo, by joining each death to the victim's last
+known position:
 
 ```sql
-SELECT k.tick, ps.x, ps.y
-FROM kills k
-JOIN players v   ON v.demo_id = k.demo_id AND v.userid = k.victim_userid
+SELECT d.tick, ps.x, ps.y
+FROM deaths d
+JOIN players v   ON v.demo_id = d.demo_id AND v.userid = d.victim_userid
 JOIN player_samples ps
-  ON ps.demo_id = k.demo_id AND ps.entity_id = v.entity_id
+  ON ps.demo_id = d.demo_id AND ps.entity_id = v.entity_id
   AND ps.tick = (SELECT MAX(tick) FROM player_samples
-                 WHERE demo_id = k.demo_id AND entity_id = v.entity_id
-                   AND tick <= k.tick)
-WHERE k.demo_id = (SELECT id FROM demos WHERE map = 'nt_saitama_ctg');
+                 WHERE demo_id = d.demo_id AND entity_id = v.entity_id
+                   AND tick <= d.tick)
+WHERE d.demo_id = (SELECT id FROM demos WHERE map = 'nt_saitama_ctg');
 ```
