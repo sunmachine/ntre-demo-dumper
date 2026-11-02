@@ -742,7 +742,7 @@ mod tests {
     }
 
     fn resource(tick: u32, entity_id: u32, team: i64) -> ResourceSample {
-        ResourceSample { tick, entity_id, team, xp: 0, score: 0, deaths: 0, ping: 0 }
+        ResourceSample { tick, entity_id, team, alive: true, connected: true, xp: 0, score: 0, deaths: 0, ping: 0 }
     }
 
     #[test]

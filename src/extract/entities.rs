@@ -71,6 +71,12 @@ pub struct ResourceSample {
     pub entity_id: u32,
     /// `m_iTeam`, coded as `PlayerSample::team`.
     pub team: i64,
+    /// `m_bAlive`: the player was alive at the last resource refresh.
+    pub alive: bool,
+    /// `m_bConnected`: a player held the slot at the last refresh. A
+    /// disconnect clears only this, leaving the slot's team and alive flag
+    /// as they were.
+    pub connected: bool,
     pub xp: i64,
     pub score: i64,
     pub deaths: i64,
@@ -161,6 +167,8 @@ struct PlayerState {
 #[derive(Default, Clone)]
 struct ResourceState {
     team: i64,
+    alive: i64,
+    connected: i64,
     xp: i64,
     score: i64,
     deaths: i64,
@@ -514,6 +522,8 @@ impl EntityAnalyser {
                 "m_iDeaths" => &mut entry.deaths,
                 "m_iPing" => &mut entry.ping,
                 "m_iTeam" => &mut entry.team,
+                "m_bAlive" => &mut entry.alive,
+                "m_bConnected" => &mut entry.connected,
                 _ => continue,
             };
             if *field != *v {
@@ -529,6 +539,8 @@ impl EntityAnalyser {
                 tick,
                 entity_id: slot,
                 team: s.team,
+                alive: s.alive != 0,
+                connected: s.connected != 0,
                 xp: s.xp,
                 score: s.score,
                 deaths: s.deaths,

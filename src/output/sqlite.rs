@@ -123,10 +123,23 @@ CREATE TABLE IF NOT EXISTS player_resource (
     tick INTEGER NOT NULL,
     entity_id INTEGER NOT NULL,   -- player slot; joins players.entity_id
     team INTEGER NOT NULL,        -- 0 unassigned, 1 spectator, 2 Jinrai, 3 NSF
+    alive INTEGER NOT NULL,       -- 1 if alive at the last resource refresh
+    connected INTEGER NOT NULL,   -- 1 while a player holds the slot; a disconnect clears only this
     xp INTEGER NOT NULL,          -- NT;RE XP (the scoreboard rank number)
     score INTEGER NOT NULL,
     deaths INTEGER NOT NULL,
     ping INTEGER NOT NULL
+);
+
+-- Living players per team, on change. Counts come from the player
+-- resource, at the tick of the death or round start behind each change.
+CREATE TABLE IF NOT EXISTS alive_counts (
+    id INTEGER PRIMARY KEY,
+    demo_id INTEGER NOT NULL REFERENCES demos(id),
+    tick INTEGER NOT NULL,
+    round_number INTEGER,          -- joins rounds.round_number; NULL before the first round
+    team INTEGER NOT NULL,         -- 2 Jinrai, 3 NSF
+    alive INTEGER NOT NULL         -- players on the team alive from this tick on
 );
 
 -- Recorder point-of-view, per packet frame: position and view angles.
@@ -368,6 +381,7 @@ CREATE INDEX IF NOT EXISTS idx_player_samples_demo_tick ON player_samples(demo_i
 CREATE INDEX IF NOT EXISTS idx_player_samples_demo_entity ON player_samples(demo_id, entity_id, tick);
 CREATE INDEX IF NOT EXISTS idx_game_events_demo_name ON game_events(demo_id, name);
 CREATE INDEX IF NOT EXISTS idx_deaths_demo_tick ON deaths(demo_id, tick);
+CREATE INDEX IF NOT EXISTS idx_alive_counts_demo_tick ON alive_counts(demo_id, tick);
 CREATE INDEX IF NOT EXISTS idx_announcements_demo_tick ON announcements(demo_id, tick);
 CREATE INDEX IF NOT EXISTS idx_pov_demo_tick ON pov_samples(demo_id, tick);
 CREATE INDEX IF NOT EXISTS idx_inputs_demo_tick ON recorder_inputs(demo_id, tick);
@@ -853,18 +867,43 @@ impl Db {
         Ok(())
     }
 
+    pub fn insert_alive_counts(
+        &self,
+        demo_id: i64,
+        counts: &[crate::extract::alive::AliveCount],
+    ) -> Result<()> {
+        let mut ins = self.conn.prepare(
+            "INSERT INTO alive_counts (demo_id, tick, round_number, team, alive)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+        )?;
+        for c in counts {
+            ins.execute(rusqlite::params![demo_id, c.tick, c.round_number, c.team, c.alive])?;
+        }
+        Ok(())
+    }
+
     pub fn insert_player_resource(
         &self,
         demo_id: i64,
         samples: &[crate::extract::entities::ResourceSample],
     ) -> Result<()> {
         let mut ins = self.conn.prepare(
-            "INSERT INTO player_resource (demo_id, tick, entity_id, team, xp, score, deaths, ping)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            "INSERT INTO player_resource (demo_id, tick, entity_id, team, alive, connected, xp,
+                                          score, deaths, ping)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         )?;
         for s in samples {
             ins.execute(rusqlite::params![
-                demo_id, s.tick, s.entity_id, s.team, s.xp, s.score, s.deaths, s.ping,
+                demo_id,
+                s.tick,
+                s.entity_id,
+                s.team,
+                s.alive,
+                s.connected,
+                s.xp,
+                s.score,
+                s.deaths,
+                s.ping,
             ])?;
         }
         Ok(())

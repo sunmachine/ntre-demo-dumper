@@ -78,6 +78,7 @@ rows are recomputed on every parse and may change when a rule improves.
 | `player_samples` | tick series | PVS-limited in POV | `entity_id` |
 | `ghost_samples` | tick series | PVS-limited in POV | none (ghost entity) |
 | `player_resource` | tick series | | `entity_id` |
+| `alive_counts` | tick series | | none (per team) |
 | `pov_samples` | tick series | | none (the recorder) |
 | `recorder_inputs` | tick series | POV only | none (the recorder) |
 | `deaths` | event log | | `steamid` |
@@ -215,10 +216,66 @@ times, PVS included.
 | `tick` | sample time |
 | `entity_id` | player slot; joins `players.entity_id` |
 | `team` | `m_iTeam`, coded as in `player_samples.team` |
+| `alive` | `m_bAlive`: 1 if the player was alive at the last resource refresh |
+| `connected` | `m_bConnected`: 1 while a player holds the slot. A disconnect clears only this, so a slot keeps its last `team` and `alive` after its player leaves (upstream at `bea96408`, `src/game/server/player_resource.cpp:250`) |
 | `xp` | NT;RE XP, the number the scoreboard ranks by |
 | `score` | engine score field |
 | `deaths` | death count |
 | `ping` | latency in ms; 0 for bots |
+
+### `alive_counts`
+
+How many players each team has alive, written when a team's count
+changes. The latest row for a team at or before a tick is its count at
+that tick. The first rows of a demo give both teams' counts at the first
+resource update.
+
+The counts come from `player_resource.team`, `alive` and `connected`, so
+they cover every player in both recording types. A slot counts while it
+is both connected and alive, because a player who leaves keeps their
+slot's last `team` and `alive`.
+
+The resource trails the game by up to a refresh, so changes are timed
+from the events behind them. A death in `deaths` takes its victim out on
+the death's own tick. A player coming alive moves back to the start tick
+of their round when it falls within 10 ticks before the resource shows
+them. Any other change stays on the resource tick, a few ticks late.
+That covers a player leaving or switching team while alive, a late
+joiner's first spawn, and every respawn in a mode that respawns players
+during a round, such as JGR.
+
+Measured on 33 recordings dated 2026-03-19 to 2026-10-24, 32 of them
+SourceTV and one POV:
+
+| measure | result |
+|---|---|
+| deaths the resource shows 0 to 8 ticks after the death | 2900 of 2901 |
+| spawns outside JGR the resource shows 0 to 8 ticks after a round start | 2414 of 2469 |
+| SourceTV round starts where the count matches the entities' life state | 738 of 738 |
+| SourceTV death ticks where the count matches the entities' life state | 2781 of 2782 |
+
+The death the resource never showed came 4 ticks before a round started,
+and the victim was alive again by the next refresh. The mismatch is a
+player who had left the server, whose last entity sample is still marked
+alive.
+
+| column | meaning |
+|---|---|
+| `tick` | when the count changed |
+| `round_number` | the round the tick falls in, as in `deaths.round_number`; NULL before the first round |
+| `team` | 2 Jinrai, 3 NSF |
+| `alive` | players on the team alive from this tick on |
+
+Who was left alive on the victim's team after each death:
+
+```sql
+SELECT d.tick, d.victim_team,
+       (SELECT a.alive FROM alive_counts a
+        WHERE a.demo_id = d.demo_id AND a.team = d.victim_team AND a.tick <= d.tick
+        ORDER BY a.tick DESC LIMIT 1) AS left_alive
+FROM deaths d
+WHERE d.demo_id = (SELECT id FROM demos WHERE map = 'nt_saitama_ctg');
+```
 
 ### `pov_samples`
 
