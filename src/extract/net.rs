@@ -334,7 +334,8 @@ fn str_field(fields: &[(String, EventValue)], name: &str) -> String {
 }
 
 /// For a grenade or detpack kill, the event reports the inflictor rather
-/// than the holder's weapon (upstream `neo_gamerules.cpp:4341-4351`), so
+/// than the holder's weapon (upstream at `bea96408`,
+/// `neo_gamerules.cpp:4515-4530`), so
 /// `weapon` arrives as the projectile's own entity name. Map it to the
 /// weapon that threw or placed it; any other value, such as a world damage
 /// cause, passes through as the event sent it.
