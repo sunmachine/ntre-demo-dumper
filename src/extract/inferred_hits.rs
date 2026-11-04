@@ -242,6 +242,7 @@ mod tests {
             victim_team: None,
             attacker_team: None,
             assister_team: None,
+            teamkill: None,
         }];
         let hits = infer(&samples, &deaths, &players);
         assert_eq!(hits.len(), 2);

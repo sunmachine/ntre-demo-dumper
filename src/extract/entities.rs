@@ -96,6 +96,15 @@ pub struct CarrierChange {
     pub entity_id: u32,
 }
 
+/// One change of the game rules proxy's `m_nGameTypeSelected`, the game
+/// mode the server is running (upstream at `bea96408`,
+/// `neo_gamerules.cpp:341`).
+pub struct GameTypeChange {
+    pub tick: u32,
+    /// Coded as upstream's `NeoGameType` (`neo_gamerules.h:102-113`).
+    pub game_type: i64,
+}
+
 /// One change of a player entity's `m_szNeoName`, the name the player set
 /// with `neo_name`. The prop is empty while the player has set none
 /// (upstream at `bea96408`, `neo_player.cpp:1792-1810`).
@@ -119,6 +128,7 @@ pub struct EntityOutput {
     pub resource_samples: Vec<ResourceSample>,
     pub damage_samples: Vec<DamageSample>,
     pub carrier_changes: Vec<CarrierChange>,
+    pub game_type_changes: Vec<GameTypeChange>,
     pub zone_changes: Vec<ZoneChange>,
     pub neo_name_changes: Vec<NeoNameChange>,
     pub player_classes: Vec<String>,
@@ -220,6 +230,7 @@ struct EntityAnalyser {
     resource_samples: Vec<ResourceSample>,
     damage_samples: Vec<DamageSample>,
     carrier_changes: Vec<CarrierChange>,
+    game_type_changes: Vec<GameTypeChange>,
     zone_changes: Vec<ZoneChange>,
     neo_name_changes: Vec<NeoNameChange>,
 }
@@ -486,12 +497,20 @@ impl EntityAnalyser {
             let Some(name) = self.prop_names.get(&prop.identifier) else {
                 continue;
             };
-            if let ("m_iGhosterPlayer", SendPropValue::Integer(index)) = (name.as_str(), &prop.value) {
-                let entity_id = *index as u32;
-                if entity_id != self.carrier {
-                    self.carrier = entity_id;
-                    self.carrier_changes.push(CarrierChange { tick, entity_id });
+            match (name.as_str(), &prop.value) {
+                ("m_iGhosterPlayer", SendPropValue::Integer(index)) => {
+                    let entity_id = *index as u32;
+                    if entity_id != self.carrier {
+                        self.carrier = entity_id;
+                        self.carrier_changes.push(CarrierChange { tick, entity_id });
+                    }
                 }
+                ("m_nGameTypeSelected", SendPropValue::Integer(game_type))
+                    if self.game_type_changes.last().is_none_or(|c| c.game_type != *game_type) =>
+                {
+                    self.game_type_changes.push(GameTypeChange { tick, game_type: *game_type });
+                }
+                _ => {}
             }
         }
     }
@@ -681,6 +700,7 @@ impl MessageHandler for EntityAnalyser {
             resource_samples: self.resource_samples,
             damage_samples: self.damage_samples,
             carrier_changes: self.carrier_changes,
+            game_type_changes: self.game_type_changes,
             zone_changes: self.zone_changes,
             neo_name_changes: self.neo_name_changes,
             player_classes: player_class_names,

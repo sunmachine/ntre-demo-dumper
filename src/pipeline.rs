@@ -137,6 +137,9 @@ pub fn parse_one(path: &Path, db: &Db, opts: &Options) -> Result<Outcome> {
         net.apply_neo_names(&output.neo_name_changes);
         net.place_teams(&output.resource_samples);
     }
+    // Without the entity pass the teams are unknown, so only world deaths
+    // and suicides get a teamkill flag.
+    net.mark_teamkills(entity_output.as_ref().map(|o| &o.game_type_changes[..]).unwrap_or_default());
     // The roster should hold every connection, so a death naming a userid
     // outside it points at a roster gap rather than a world death.
     let missing = net.deaths_missing_from_roster();
