@@ -14,7 +14,7 @@ use regex::Regex;
 use std::collections::HashMap;
 
 use super::announcements::Announcement;
-use super::entities::{CarrierChange, EntityOutput, PlayerSample, ZoneChange};
+use super::entities::{CarrierChange, EntityOutput, GhostSample, PlayerSample, ZoneChange};
 use super::net::{slot_holder, Death, Player, RoundResult};
 
 pub struct Round {
@@ -25,6 +25,8 @@ pub struct Round {
     pub reason: Option<String>,
     /// The userid of the player who carried the ghost into the capture zone.
     pub capturer_userid: Option<u32>,
+    /// Where the ghost spawned, set by `place_ghost_spawns`.
+    pub ghost_spawn: Option<[f32; 3]>,
 }
 
 impl Round {
@@ -36,6 +38,7 @@ impl Round {
             winner: None,
             reason: None,
             capturer_userid: None,
+            ghost_spawn: None,
         }
     }
 }
@@ -416,6 +419,22 @@ pub fn place(rounds: &[Round], tick: i32) -> Option<RoundPlace> {
         None => rounds.len().checked_sub(1)?,
     };
     Some(RoundPlace { number: rounds[previous].number, index: ordinal(previous), post_round: true })
+}
+
+/// Give each round the ghost's position on its start tick. The game prints
+/// the start banner and moves the ghost to a spawn point in the same call
+/// (upstream at `bea96408`, `neo_gamerules.cpp:3031-3034`, reaching
+/// `SpawnTheGhost` through `:3451-3459`), so the ghost's first sample of the
+/// round lands on the start tick. A round with no start tick, or in a mode
+/// without a ghost, keeps None.
+pub fn place_ghost_spawns(rounds: &mut [Round], ghost_samples: &[GhostSample]) {
+    for round in rounds {
+        let Some(start) = round.start_tick else { continue };
+        round.ghost_spawn = ghost_samples
+            .iter()
+            .find(|g| i64::from(g.tick) == i64::from(start))
+            .map(|g| [g.x, g.y, g.z]);
+    }
 }
 
 /// The 1-based position stored as `rounds.round_index` for `rounds[i]`.
@@ -849,5 +868,19 @@ mod tests {
     fn zones_switching_off_without_a_carrier_is_not_a_capture() {
         let players = HashMap::from([player(7, 4, 0)]);
         assert_eq!(capturer_of(&[], &[(100, 50), (100, 51)], &players), None);
+    }
+
+    #[test]
+    fn ghost_spawns_come_from_the_start_tick_sample() {
+        let ghost = |tick: u32, x: f32| GhostSample { tick, entity_id: 90, x, y: 0.0, z: 0.0 };
+        let mut rounds = vec![
+            Round::unstarted(), // the recording began mid-round
+            Round { start_tick: Some(100), ..Round::unstarted() },
+            Round { start_tick: Some(200), ..Round::unstarted() }, // no ghost this round
+        ];
+        // The ghost lies at x = 5 before round 2 and moves to its spawn on the start tick.
+        place_ghost_spawns(&mut rounds, &[ghost(50, 5.0), ghost(100, 1.0), ghost(102, 2.0)]);
+        let spawns: Vec<_> = rounds.iter().map(|r| r.ghost_spawn).collect();
+        assert_eq!(spawns, [None, Some([1.0, 0.0, 0.0]), None]);
     }
 }

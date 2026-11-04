@@ -654,6 +654,7 @@ alive. Otherwise it is NULL.
 | `win_reason` | how the round was won, below; NULL when unknown. The full text is in `round_results.message` |
 | `capturer_steamid` | the player who carried the ghost into the capture zone; joins `players.steamid`. NULL unless the round was won by a capture |
 | `capturer_userid` | the capturer's connection id; joins `players.userid` and tells bots apart |
+| `ghost_spawn_x`, `ghost_spawn_y`, `ghost_spawn_z` | where the ghost spawned: its `ghost_samples` position on `start_tick`, before it falls or anyone picks it up. NULL when the round has no start tick, when the mode has no ghost at round start, as in VIP and JGR, and in a POV recording whose view did not reach the ghost |
 
 | `win_reason` | meaning |
 |---|---|
@@ -662,6 +663,46 @@ alive. Otherwise it is NULL.
 | `score` | a points win in TDM, JGR or deathmatch |
 | `forfeit` | the VIP left the game |
 | `tie` | no team won |
+
+The game prints the start banner and moves the ghost to a spawn point in
+the same call (upstream at `bea96408`,
+`src/game/shared/neo/neo_gamerules.cpp:3031-3034`, reaching `SpawnTheGhost`
+through `:3451-3459`). The ghost's first sample of the round therefore
+lands on the start tick. That sample is the spawn point itself unless the
+recording's next snapshot came a tick or two after the spawn, when the
+ghost has already begun to fall or roll. Across 33 recordings dated
+2026-03-19 to 2026-10-24, each of 379 spawns was compared with the most
+common reading within 64 units of it on the same map:
+
+| distance from the most common reading | rounds |
+|---|---|
+| 0 | 297 |
+| up to 1 unit | 47 |
+| 1 to 5 units | 19 |
+| 5 to 10 units | 14 |
+| 10 to 20 units | 2 |
+
+The query behind the table gives each spawn its squared distance:
+
+```sql
+WITH spawns AS (
+  SELECT d.map, r.ghost_spawn_x AS x, r.ghost_spawn_y AS y, r.ghost_spawn_z AS z
+  FROM rounds r JOIN demos d ON d.id = r.demo_id
+  WHERE r.ghost_spawn_x IS NOT NULL
+), readings AS (
+  SELECT map, x, y, z, count(*) AS n FROM spawns GROUP BY map, x, y, z
+)
+SELECT s.map, (
+  SELECT (r.x - s.x) * (r.x - s.x) + (r.y - s.y) * (r.y - s.y) + (r.z - s.z) * (r.z - s.z)
+  FROM readings r
+  WHERE r.map = s.map
+    AND (r.x - s.x) * (r.x - s.x) + (r.y - s.y) * (r.y - s.y) + (r.z - s.z) * (r.z - s.z) < 64 * 64
+  ORDER BY r.n DESC LIMIT 1) AS distance_squared
+FROM spawns s;
+```
+
+To group rounds by spawn point, cluster the coordinates within a few units
+rather than comparing them exactly.
 
 ## Inferred tables
 
