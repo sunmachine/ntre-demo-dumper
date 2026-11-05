@@ -639,6 +639,9 @@ captures). `rounds` takes its start markers from these. `seconds` is precomputed
 
 One row per round: the `ROUND N STARTED` announcement supplies the number
 and start tick, and `round_results` supplies the end tick and outcome. A
+recording that begins in a round's freeze time can miss that round's
+announcement, so the first round falls back to the tick the game rules
+entered the freeze. A
 demo without `RoundResult` messages falls back to `Team X wins ...`
 announcements for its ends, which cannot see ties; there, a match-end line
 leaves the round's winner and reason NULL, because it names the match's
@@ -655,9 +658,9 @@ alive. Otherwise it is NULL.
 
 | column | meaning |
 |---|---|
-| `round_number` | as announced by the game. A round the recording joined after it started has no announcement, so it takes one less than the next round's number, or its position in the demo when no later round was announced (`src/extract/rounds.rs:341-351`). It is never NULL. A round restarted after an admin pause repeats its number, and a match restart starts the count again, so one number can name several rounds of a demo |
+| `round_number` | as announced by the game. A round the recording joined after it started has no announcement, so it takes one less than the next round's number, or its position in the demo when no later round was announced (`src/extract/rounds.rs:347-357`). It is never NULL. A round restarted after an admin pause repeats its number, and a match restart starts the count again, so one number can name several rounds of a demo |
 | `round_index` | the round's position in the demo, counting from 1 in tick order; unique within a demo, so other tables join on it |
-| `start_tick`, `end_tick` | NULL when the demo started mid-round, or the round never ended (cut off, or aborted by a pause) |
+| `start_tick`, `end_tick` | NULL when the demo started mid-round, or the round never ended (cut off, or aborted by a pause). An auto-recorded demo begins in its first round's freeze time, and that round's `start_tick` is the recording's first snapshot, a few ticks in, whether or not the start text was recorded |
 | `winner` | `jinrai`, `nsf` or `tie`, as in `round_results.team`; NULL for a round that never ended or whose winner is unknown |
 | `win_reason` | how the round was won, below; NULL when unknown. The full text is in `round_results.message` |
 | `capturer_steamid` | the player who carried the ghost into the capture zone; joins `players.steamid`. NULL unless the round was won by a capture |

@@ -105,6 +105,21 @@ pub struct GameTypeChange {
     pub game_type: i64,
 }
 
+/// The game rules proxy entering a round's freeze time: `m_nRoundStatus`
+/// becoming `PreRoundFreeze` (upstream at `bea96408`,
+/// `neo_gamerules.h:126-129`, sent at `neo_gamerules.cpp:340`). The server
+/// sets the status, prints the round's start text and fires `round_start` in
+/// one call, so this lands on the round's start tick. A recording that
+/// begins in a freeze time sees it on its first snapshot.
+pub struct FreezeStart {
+    pub tick: u32,
+    /// The proxy's `m_iRoundNumber` at that tick (`neo_gamerules.cpp:342`).
+    pub round_number: i32,
+}
+
+/// `NeoRoundStatus::PreRoundFreeze` in upstream's enum.
+const PRE_ROUND_FREEZE: i64 = 2;
+
 /// One change of a player entity's `m_szNeoName`, the name the player set
 /// with `neo_name`. The prop is empty while the player has set none
 /// (upstream at `bea96408`, `neo_player.cpp:1792-1810`).
@@ -130,6 +145,7 @@ pub struct EntityOutput {
     pub carrier_changes: Vec<CarrierChange>,
     pub game_type_changes: Vec<GameTypeChange>,
     pub zone_changes: Vec<ZoneChange>,
+    pub freeze_starts: Vec<FreezeStart>,
     pub neo_name_changes: Vec<NeoNameChange>,
     pub player_classes: Vec<String>,
     pub warning: Option<String>,
@@ -225,6 +241,9 @@ struct EntityAnalyser {
     carrier: u32,
     /// capture zone entity -> last seen `m_bIsActive`
     zones: HashMap<u32, bool>,
+    /// last seen `m_nRoundStatus` and `m_iRoundNumber` of the rules proxy
+    round_status: Option<i64>,
+    round_number: i64,
     samples: Vec<PlayerSample>,
     ghost_samples: Vec<GhostSample>,
     resource_samples: Vec<ResourceSample>,
@@ -232,6 +251,7 @@ struct EntityAnalyser {
     carrier_changes: Vec<CarrierChange>,
     game_type_changes: Vec<GameTypeChange>,
     zone_changes: Vec<ZoneChange>,
+    freeze_starts: Vec<FreezeStart>,
     neo_name_changes: Vec<NeoNameChange>,
 }
 
@@ -493,11 +513,19 @@ impl EntityAnalyser {
         if entity.update_type == UpdateType::Delete {
             return;
         }
+        // The status and the round number change in the same update, in
+        // either prop order, so the freeze is recorded after reading both.
+        let mut status_changed = false;
         for prop in entity.props(state) {
             let Some(name) = self.prop_names.get(&prop.identifier) else {
                 continue;
             };
             match (name.as_str(), &prop.value) {
+                ("m_nRoundStatus", SendPropValue::Integer(status)) => {
+                    status_changed = self.round_status != Some(*status);
+                    self.round_status = Some(*status);
+                }
+                ("m_iRoundNumber", SendPropValue::Integer(number)) => self.round_number = *number,
                 ("m_iGhosterPlayer", SendPropValue::Integer(index)) => {
                     let entity_id = *index as u32;
                     if entity_id != self.carrier {
@@ -512,6 +540,10 @@ impl EntityAnalyser {
                 }
                 _ => {}
             }
+        }
+        if status_changed && self.round_status == Some(PRE_ROUND_FREEZE) {
+            let round_number = i32::try_from(self.round_number).unwrap_or_default();
+            self.freeze_starts.push(FreezeStart { tick, round_number });
         }
     }
 
@@ -702,6 +734,7 @@ impl MessageHandler for EntityAnalyser {
             carrier_changes: self.carrier_changes,
             game_type_changes: self.game_type_changes,
             zone_changes: self.zone_changes,
+            freeze_starts: self.freeze_starts,
             neo_name_changes: self.neo_name_changes,
             player_classes: player_class_names,
             warning: None,
