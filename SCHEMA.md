@@ -655,7 +655,7 @@ alive. Otherwise it is NULL.
 
 | column | meaning |
 |---|---|
-| `round_number` | as announced by the game; NULL if the first start marker was missed. A round restarted after an admin pause repeats its number, and a match restart starts the count again, so one number can name several rounds of a demo |
+| `round_number` | as announced by the game. A round the recording joined after it started has no announcement, so it takes one less than the next round's number, or its position in the demo when no later round was announced (`src/extract/rounds.rs:341-351`). It is never NULL. A round restarted after an admin pause repeats its number, and a match restart starts the count again, so one number can name several rounds of a demo |
 | `round_index` | the round's position in the demo, counting from 1 in tick order; unique within a demo, so other tables join on it |
 | `start_tick`, `end_tick` | NULL when the demo started mid-round, or the round never ended (cut off, or aborted by a pause) |
 | `winner` | `jinrai`, `nsf` or `tie`, as in `round_results.team`; NULL for a round that never ended or whose winner is unknown |
