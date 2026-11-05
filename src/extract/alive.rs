@@ -206,6 +206,7 @@ mod tests {
             winner: None,
             reason: None,
             capturer_userid: None,
+            ghost_spawn: None,
         }
     }
 

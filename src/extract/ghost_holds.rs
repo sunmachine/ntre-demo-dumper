@@ -116,7 +116,7 @@ mod tests {
     }
 
     fn round(number: i32, start_tick: Option<i32>, end_tick: Option<i32>) -> Round {
-        Round { number: Some(number), start_tick, end_tick, winner: None, reason: None, capturer_userid: None }
+        Round { number: Some(number), start_tick, end_tick, winner: None, reason: None, capturer_userid: None, ghost_spawn: None }
     }
 
     #[test]
@@ -155,6 +155,7 @@ mod tests {
             winner: None,
             reason: None,
             capturer_userid: None,
+            ghost_spawn: None,
         }];
         // Slot 4 picks it up, drops it, slot 7 picks it up and passes it
         // straight back to slot 4, who still holds it when the demo ends.
@@ -179,6 +180,7 @@ mod tests {
             winner: None,
             reason: None,
             capturer_userid: None,
+            ghost_spawn: None,
         }];
         // The property keeps naming slot 4 until the next round resets it.
         let changes = [change(100, 4), change(1300, 0)];

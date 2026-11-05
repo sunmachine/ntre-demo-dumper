@@ -158,6 +158,9 @@ pub fn parse_one(path: &Path, db: &Db, opts: &Options) -> Result<Outcome> {
     // pass, and the capturer from entity state, so they wait for all three.
     let evidence = rounds::Evidence::new(entity_output.as_ref(), &net.players, &net.deaths);
     let mut rounds = rounds::derive(announcements.found(&ctx), &net.round_results, &evidence);
+    if let Some(output) = &entity_output {
+        rounds::place_ghost_spawns(&mut rounds, &output.ghost_samples);
+    }
     let cut = match opts.last_round {
         Some(last) => rounds::cut_after(&mut rounds, last)?,
         None => None,

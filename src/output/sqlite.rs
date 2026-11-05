@@ -402,7 +402,10 @@ CREATE TABLE IF NOT EXISTS rounds (
     winner TEXT, -- jinrai, nsf or tie, as round_results.team sends it; NULL if the round never ended
     win_reason TEXT, -- objective, elimination, score, forfeit or tie; NULL when unknown
     capturer_steamid TEXT,  -- joins players.steamid; NULL unless the round was won by a capture
-    capturer_userid INTEGER -- connection id; joins players.userid
+    capturer_userid INTEGER, -- connection id; joins players.userid
+    ghost_spawn_x REAL,      -- the ghost's position on start_tick; NULL without a ghost
+    ghost_spawn_y REAL,
+    ghost_spawn_z REAL
 );
 
 CREATE INDEX IF NOT EXISTS idx_player_samples_demo_tick ON player_samples(demo_id, tick);
@@ -572,8 +575,9 @@ impl Db {
     pub fn insert_rounds(&self, demo_id: i64, rounds: &[Round], steamid_of: SteamIdOf) -> Result<()> {
         let mut ins = self.conn.prepare(
             "INSERT INTO rounds (demo_id, round_number, round_index, start_tick, end_tick, winner,
-                                 win_reason, capturer_steamid, capturer_userid)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                                 win_reason, capturer_steamid, capturer_userid,
+                                 ghost_spawn_x, ghost_spawn_y, ghost_spawn_z)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
         )?;
         for (i, r) in rounds.iter().enumerate() {
             ins.execute(rusqlite::params![
@@ -586,6 +590,9 @@ impl Db {
                 r.reason,
                 r.capturer_userid.and_then(steamid_of),
                 r.capturer_userid,
+                r.ghost_spawn.map(|p| p[0]),
+                r.ghost_spawn.map(|p| p[1]),
+                r.ghost_spawn.map(|p| p[2]),
             ])?;
         }
         Ok(())
