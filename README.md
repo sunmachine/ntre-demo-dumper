@@ -105,11 +105,20 @@ ntre-demo-dumper --pov-sample 10 my.dem      # thin POV samples to every 10th fr
 ntre-demo-dumper --match 'REGEX' my.dem      # capture extra announcement patterns
 ntre-demo-dumper --all-strings my.dem        # exploratory: keep every recovered string
 ntre-demo-dumper --last-round 9 my.dem       # keep rounds 1-9, drop everything after
+ntre-demo-dumper --omit-samples *.dem        # leave the per-tick sample tables empty
+ntre-demo-dumper --omit chat,game_events *.dem  # leave the named tables empty
 ```
 
+The per-tick sample tables hold almost all of a database's size. Across 33
+recordings, `player_samples` took 95% of a 3.4 GB database and
+`pov_samples` most of the rest. `--omit-samples` leaves every table named
+`*_samples` empty, and `--omit` takes any list of table names. Omitting a
+table saves disk space, not parse time, because the tables derived from
+the samples still need them in memory.
+
 A demo already in the database is skipped, even under another name. That
-includes a demo parsed with `--last-round`, so parse the whole demo into
-another database file if you need it later.
+includes a demo parsed with `--last-round`, `--omit` or `--omit-samples`,
+so parse the whole demo into another database file if you need it later.
 
 The tables cover metadata, announcements, rounds, scores, roster, deaths,
 pings, chat, game events, and per-tick samples. Some fill only for SourceTV

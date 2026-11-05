@@ -43,6 +43,11 @@ match restart.
 `--last-round` cuts the demo after the rounds are derived. Every pass still
 reads the whole file, and the pipeline then deletes the rows from the next
 round's start tick on, in that same transaction (`Db::cut_at`).
+`--omit` and `--omit-samples` act at the other end. Every pass still runs,
+because the derived tables need the samples in memory, and each `Db`
+insert function returns before writing when its table is omitted
+(`Db::omit`). The gate sits in the output layer so that no extractor needs
+to know which tables the run keeps.
 
 ## Layer rules
 
