@@ -170,6 +170,20 @@ prints that text in one call (upstream at `bea96408`,
 `src/game/shared/neo/neo_gamerules.cpp:2879`, `:3004`, `:3032`), so all
 three land on one tick and nothing of the round comes before it.
 
+Auto-recording begins on the `round_start` event, after the start text has
+gone out (upstream at `bea96408`,
+`src/game/shared/neo/neo_gamerules.cpp:1935` for a player's recording,
+`:1946` and `src/game/shared/neo/neo_misc.cpp:130` for SourceTV). Whether
+the text reaches the recording varies from match to match; in SourceTV
+recordings from March to October 2026, most lack it. Every one of those
+recordings opens with the game rules proxy in `PreRoundFreeze` for the
+round in progress, and where the text did arrive it lands on that first
+snapshot's tick. `rounds` therefore takes a first round's missing
+start from the proxy's `m_nRoundStatus` entering the freeze, when the
+proxy's `m_iRoundNumber` matches the round (`extract/rounds.rs`,
+`first_freeze`). A recording joined after the freeze sees the next round's
+freeze first, so its first round keeps a NULL start.
+
 When a round ends the match or leads into sudden death, `SetWinningTeam`
 substitutes "Team X wins the match!", "The match is tied!" or "Next round:
 Sudden death!" for the round's own reason text, but the `RoundResult`

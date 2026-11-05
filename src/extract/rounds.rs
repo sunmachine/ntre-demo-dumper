@@ -6,7 +6,9 @@
 //! winner, and "tie" for stalemates, which no on-screen text announces);
 //! otherwise from "Team X wins ..." announcements. Handles demos that begin
 //! mid-round (first round has no start marker) or end mid-round (last round
-//! has no end). Facts the round-end message does not carry, such as who
+//! has no end). A recording that begins in a round's freeze time can miss
+//! that round's start text, so its first round takes the start from the
+//! game rules entering the freeze instead. Facts the round-end message does not carry, such as who
 //! captured the ghost, come from the entity state around each end.
 
 use anyhow::{bail, Result};
@@ -14,7 +16,7 @@ use regex::Regex;
 use std::collections::HashMap;
 
 use super::announcements::Announcement;
-use super::entities::{CarrierChange, EntityOutput, GhostSample, PlayerSample, ZoneChange};
+use super::entities::{CarrierChange, EntityOutput, FreezeStart, GhostSample, PlayerSample, ZoneChange};
 use super::net::{slot_holder, Death, Player, RoundResult};
 
 pub struct Round {
@@ -60,6 +62,9 @@ pub struct Evidence<'a> {
     pub player_samples: &'a [PlayerSample],
     /// The deaths, for a death landing near a round's end.
     pub deaths: &'a [Death],
+    /// The game rules entering each freeze time, for a first round whose
+    /// start text the recording missed.
+    pub freeze_starts: &'a [FreezeStart],
 }
 
 impl<'a> Evidence<'a> {
@@ -76,6 +81,7 @@ impl<'a> Evidence<'a> {
             players,
             player_samples: entities.map(|e| &e.samples[..]).unwrap_or_default(),
             deaths,
+            freeze_starts: entities.map(|e| &e.freeze_starts[..]).unwrap_or_default(),
         }
     }
 }
@@ -353,7 +359,27 @@ pub fn derive(
             r.capturer_userid = capturer(end_tick, evidence);
         }
     }
+    if let Some(first) = rounds.first_mut() {
+        first.start_tick = first.start_tick.or_else(|| first_freeze(first, evidence));
+    }
     rounds
+}
+
+/// The start tick of a first round whose start text the recording missed,
+/// or None when the recording began after the round's freeze time.
+///
+/// Auto-recording starts on the `round_start` event, after the start text
+/// has gone out (upstream at `bea96408`, `neo_gamerules.cpp:1935` for a
+/// player's recording, `:1946` and `neo_misc.cpp:130` for SourceTV).
+/// Whether the text reaches the recording varies from match to match. The
+/// first snapshot shows the game rules in the round's freeze time, on the
+/// tick the text lands on when it does arrive.
+fn first_freeze(round: &Round, evidence: &Evidence) -> Option<i32> {
+    let freeze = evidence.freeze_starts.first()?;
+    let tick = i32::try_from(freeze.tick).ok()?;
+    let same_round = round.number == Some(freeze.round_number);
+    let before_end = round.end_tick.is_none_or(|end| tick <= end);
+    (same_round && before_end).then_some(tick)
 }
 
 /// Drop the rounds after round `last` and return the tick to cut the
@@ -553,6 +579,7 @@ mod tests {
             players,
             player_samples: &[],
             deaths: &[],
+            freeze_starts: &[],
         };
         let rounds = derive(&anns, &results, &evidence);
         assert_eq!(rounds.len(), 1);
@@ -579,6 +606,43 @@ mod tests {
             (Some("nsf"), Some("objective"), None)
         );
         assert_eq!((rounds[2].number, rounds[2].end_tick), (Some(3), None));
+    }
+
+    /// Rounds from the given announcements and freeze starts, with no other
+    /// entity state.
+    fn derive_with_freezes(anns: &[Announcement], results: &[RoundResult], freezes: &[FreezeStart]) -> Vec<Round> {
+        let roster = HashMap::new();
+        let evidence = Evidence { freeze_starts: freezes, ..Evidence::new(None, &roster, &[]) };
+        derive(anns, results, &evidence)
+    }
+
+    #[test]
+    fn first_round_without_start_text_starts_at_its_freeze() {
+        let anns = [ann(1000, "- CTG ROUND 2 STARTED -")];
+        let results = [res(900, "nsf", "Team NSF wins by eliminating the other team!")];
+        let freezes = [FreezeStart { tick: 4, round_number: 1 }, FreezeStart { tick: 1000, round_number: 2 }];
+        let rounds = derive_with_freezes(&anns, &results, &freezes);
+        let starts: Vec<_> = rounds.iter().map(|r| (r.number, r.start_tick)).collect();
+        assert_eq!(starts, [(Some(1), Some(4)), (Some(2), Some(1000))]);
+    }
+
+    #[test]
+    fn first_round_joined_after_its_freeze_keeps_no_start() {
+        // The recording began while round 1 was live, so the first freeze
+        // it saw is round 2's.
+        let anns = [ann(1000, "- CTG ROUND 2 STARTED -")];
+        let results = [res(900, "nsf", "Team NSF wins by eliminating the other team!")];
+        let freezes = [FreezeStart { tick: 1000, round_number: 2 }];
+        let rounds = derive_with_freezes(&anns, &results, &freezes);
+        assert_eq!((rounds[0].number, rounds[0].start_tick), (Some(1), None));
+    }
+
+    #[test]
+    fn start_text_wins_over_the_freeze() {
+        let anns = [ann(3, "- CTG ROUND 1 STARTED -")];
+        let freezes = [FreezeStart { tick: 2, round_number: 1 }];
+        let rounds = derive_with_freezes(&anns, &[], &freezes);
+        assert_eq!(rounds[0].start_tick, Some(3));
     }
 
     #[test]
@@ -684,6 +748,7 @@ mod tests {
             players: &HashMap::new(),
             player_samples: &[],
             deaths: &[],
+            freeze_starts: &[],
         };
         let r = match_end_round("nsf", "Team NSF wins the match!", &evidence);
         assert_eq!((r.winner.as_deref(), r.reason.as_deref()), (Some("nsf"), Some("objective")));
@@ -701,6 +766,7 @@ mod tests {
             players: &players,
             player_samples: &samples,
             deaths: &deaths,
+            freeze_starts: &[],
         };
         let r = match_end_round("jinrai", "Team Jinrai wins the match!", &evidence);
         assert_eq!((r.winner.as_deref(), r.reason.as_deref()), (Some("jinrai"), Some("objective")));
@@ -719,6 +785,7 @@ mod tests {
             players: &players,
             player_samples: &samples,
             deaths: &deaths,
+            freeze_starts: &[],
         };
         let r = match_end_round("jinrai", "Team Jinrai wins the match!", &evidence);
         assert_eq!((r.winner.as_deref(), r.reason.as_deref()), (Some("jinrai"), Some("elimination")));
@@ -734,6 +801,7 @@ mod tests {
             players: &players,
             player_samples: &samples,
             deaths: &[],
+            freeze_starts: &[],
         };
         let r = match_end_round("jinrai", "Team Jinrai wins the match!", &evidence);
         assert_eq!((r.winner.as_deref(), r.reason.as_deref()), (Some("jinrai"), None));
