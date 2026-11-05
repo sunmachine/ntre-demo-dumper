@@ -238,6 +238,9 @@ mod tests {
             ghoster: false,
             round_number: None,
             post_round: false,
+            victim_team: None,
+            attacker_team: None,
+            assister_team: None,
         }];
         let hits = infer(&samples, &deaths, &players);
         assert_eq!(hits.len(), 2);

@@ -214,6 +214,7 @@ times, PVS included.
 |---|---|
 | `tick` | sample time |
 | `entity_id` | player slot; joins `players.entity_id` |
+| `team` | `m_iTeam`, coded as in `player_samples.team` |
 | `xp` | NT;RE XP, the number the scoreboard ranks by |
 | `score` | engine score field |
 | `deaths` | death count |
@@ -277,6 +278,7 @@ rows have no killer, and `ghoster` describes the victim too.
 | `victim_steamid`, `attacker_steamid`, `assister_steamid` | the players' Steam IDs, looked up in the roster at parse time; join `players.steamid`. NULL for the attacker of a world death, for the assister when nobody assisted, and for a player missing from the roster |
 | `victim_userid`, `attacker_userid` | connection ids from the event's `userid` and `attacker` fields; join `players.userid`; attacker 0 = world/environment |
 | `victim_name`, `attacker_name` | resolved at parse time; NULL if unknown |
+| `victim_team`, `attacker_team`, `assister_team` | each player's team at the death, coded as in `player_samples.team`, from the latest `player_resource.team` of their slot at or before `tick`. NULL for the attacker of a world death, for the assister when nobody assisted, for a player missing from the roster, and when the entity pass failed |
 | `assists` | userid of the assisting player, or 0 for none; joins `players.userid` (NT;RE defines the event field as "user ID who assists") |
 | `weapon` | weapon's entity name without `weapon_`, e.g. `srm`; see Weapon reference below. A grenade or detpack kill's inflictor is mapped to the weapon that made it |
 | `headshot`, `suicide`, `explosive` | kill flags |
@@ -292,6 +294,13 @@ every world death, because the game sets it whenever the killer is not a
 player (`:4413`). `headshot` reports the last body part hit before the
 death (`:4412`), so on a world death it describes an earlier hit and not
 the death.
+
+The teams come from the player resource rather than the player entity,
+because the server sends the resource to every client (upstream at
+`bea96408`, `src/game/server/player_resource.cpp:126`). A POV recording
+therefore has the team of a player the recorder never saw. The server
+refreshes the resource every 0.1 seconds (`:138`, `:220`), so a team change
+reaches it up to 7 ticks late.
 
 A round runs from its start tick through its end tick. The death that ends
 an elimination round lands on the end tick or just before it, so it

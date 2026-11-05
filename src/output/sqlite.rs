@@ -122,6 +122,7 @@ CREATE TABLE IF NOT EXISTS player_resource (
     demo_id INTEGER NOT NULL REFERENCES demos(id),
     tick INTEGER NOT NULL,
     entity_id INTEGER NOT NULL,   -- player slot; joins players.entity_id
+    team INTEGER NOT NULL,        -- 0 unassigned, 1 spectator, 2 Jinrai, 3 NSF
     xp INTEGER NOT NULL,          -- NT;RE XP (the scoreboard rank number)
     score INTEGER NOT NULL,
     deaths INTEGER NOT NULL,
@@ -177,11 +178,14 @@ CREATE TABLE IF NOT EXISTS deaths (
     victim_steamid TEXT,              -- joins players.steamid; NULL if not in the roster
     victim_userid INTEGER NOT NULL,   -- connection id; joins players.userid
     victim_name TEXT,                 -- resolved at parse time; NULL if unknown
+    victim_team INTEGER,              -- coded as player_samples.team; NULL if unknown
     attacker_steamid TEXT,            -- NULL for a world death
     attacker_userid INTEGER NOT NULL, -- 0 = world / environment
     attacker_name TEXT,
+    attacker_team INTEGER,            -- NULL for a world death
     assister_steamid TEXT,            -- NULL when nobody assisted
     assists INTEGER NOT NULL,         -- assisting player's userid, 0 = none
+    assister_team INTEGER,            -- NULL when nobody assisted
     weapon TEXT NOT NULL,             -- entity name without weapon_ prefix; a grenade or
                                        -- detpack kill's inflictor is mapped to its weapon
     headshot INTEGER NOT NULL,
@@ -617,10 +621,12 @@ impl Db {
     ) -> Result<()> {
         let mut ins = self.conn.prepare(
             "INSERT INTO deaths (demo_id, tick, round_number, post_round, victim_steamid,
-                                 victim_userid, victim_name, attacker_steamid, attacker_userid,
-                                 attacker_name, assister_steamid, assists, weapon, headshot, suicide,
-                                 explosive, ghoster)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+                                 victim_userid, victim_name, victim_team, attacker_steamid,
+                                 attacker_userid, attacker_name, attacker_team, assister_steamid,
+                                 assists, assister_team, weapon, headshot, suicide, explosive,
+                                 ghoster)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17,
+                     ?18, ?19, ?20)",
         )?;
         for k in deaths {
             ins.execute(rusqlite::params![
@@ -631,11 +637,14 @@ impl Db {
                 steamid_of(k.victim_userid),
                 k.victim_userid,
                 name_of(k.victim_userid),
+                k.victim_team,
                 steamid_of(k.attacker_userid),
                 k.attacker_userid,
                 name_of(k.attacker_userid),
+                k.attacker_team,
                 steamid_of(k.assists),
                 k.assists,
+                k.assister_team,
                 k.weapon,
                 k.headshot,
                 k.suicide,
@@ -850,12 +859,12 @@ impl Db {
         samples: &[crate::extract::entities::ResourceSample],
     ) -> Result<()> {
         let mut ins = self.conn.prepare(
-            "INSERT INTO player_resource (demo_id, tick, entity_id, xp, score, deaths, ping)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO player_resource (demo_id, tick, entity_id, team, xp, score, deaths, ping)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         )?;
         for s in samples {
             ins.execute(rusqlite::params![
-                demo_id, s.tick, s.entity_id, s.xp, s.score, s.deaths, s.ping,
+                demo_id, s.tick, s.entity_id, s.team, s.xp, s.score, s.deaths, s.ping,
             ])?;
         }
         Ok(())

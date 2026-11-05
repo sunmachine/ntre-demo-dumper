@@ -13,7 +13,7 @@ use crate::demo::net::{
     parse_game_event, walk_packet, EventDefs, EventValue, NetMessage, ServerInfo,
 };
 use crate::demo::stringtables::{parse_userinfo, parse_userinfo_update, PlayerInfo};
-use crate::extract::entities::NeoNameChange;
+use crate::extract::entities::{NeoNameChange, ResourceSample};
 use crate::extract::rounds::{place, Round};
 use crate::output::sqlite::Db;
 
@@ -32,6 +32,11 @@ pub struct Death {
     pub round_number: Option<i32>,
     /// The death fell after its round ended and before the next one began.
     pub post_round: bool,
+    /// The teams of the victim, attacker and assister at the death, set by
+    /// `NetPass::place_teams`; None for the world, for nobody, or when unknown.
+    pub victim_team: Option<i64>,
+    pub attacker_team: Option<i64>,
+    pub assister_team: Option<i64>,
 }
 
 pub struct ChatLine {
@@ -339,6 +344,32 @@ impl NetPass {
         }
     }
 
+    /// Give each death the teams of its victim, attacker and assister, from
+    /// the player resource's team array at the death's tick. The server
+    /// sends the resource to every client, so POV recordings have the team
+    /// of a player the recorder never saw.
+    pub fn place_teams(&mut self, resource: &[ResourceSample]) {
+        // Each slot's team changes, in tick order.
+        let mut changes: HashMap<u32, Vec<(u32, i64)>> = HashMap::new();
+        for s in resource {
+            let slot = changes.entry(s.entity_id).or_default();
+            if slot.last().is_none_or(|&(_, team)| team != s.team) {
+                slot.push((s.tick, s.team));
+            }
+        }
+        let players = &self.players;
+        let team_of = |userid: u32, tick: i32| {
+            let slot = changes.get(&players.get(&userid)?.entity_id)?;
+            let after = slot.partition_point(|&(t, _)| i64::from(t) <= i64::from(tick));
+            Some(slot[after.checked_sub(1)?].1)
+        };
+        for d in &mut self.deaths {
+            d.victim_team = team_of(d.victim_userid, d.tick);
+            d.attacker_team = team_of(d.attacker_userid, d.tick);
+            d.assister_team = team_of(d.assists, d.tick);
+        }
+    }
+
     /// How many deaths name a victim, attacker or assister that the roster
     /// never saw. Those rows get NULL names and Steam IDs. Userid 0 is the
     /// world as attacker and nobody as assister, so it does not count.
@@ -364,6 +395,9 @@ impl NetPass {
                 ghoster: bool_field(fields, "ghoster"),
                 round_number: None,
                 post_round: false,
+                victim_team: None,
+                attacker_team: None,
+                assister_team: None,
             }),
             "player_ping" => self.pings.push(Ping {
                 tick,
@@ -685,6 +719,9 @@ mod tests {
             ghoster: false,
             round_number: None,
             post_round: false,
+            victim_team: None,
+            attacker_team: None,
+            assister_team: None,
         }
     }
 
@@ -702,6 +739,38 @@ mod tests {
             ..NetPass::default()
         };
         assert_eq!(pass.deaths_missing_from_roster(), 3);
+    }
+
+    fn resource(tick: u32, entity_id: u32, team: i64) -> ResourceSample {
+        ResourceSample { tick, entity_id, team, xp: 0, score: 0, deaths: 0, ping: 0 }
+    }
+
+    #[test]
+    fn death_teams_come_from_the_resource_at_the_death_tick() {
+        let at = |tick: i32, victim: u32, attacker: u32, assists: u32| Death {
+            tick,
+            ..death(victim, attacker, assists)
+        };
+        let mut pass = NetPass {
+            players: HashMap::from([(1, roster_player(1)), (2, roster_player(2)), (3, roster_player(3))]),
+            deaths: vec![at(50, 1, 2, 3), at(100, 1, 0, 0), at(200, 1, 2, 0), at(5, 1, 2, 0)],
+            ..NetPass::default()
+        };
+        // Player 1 switches from Jinrai to NSF at tick 100. Player 3 has no
+        // sample yet at tick 5.
+        let samples = [resource(10, 1, 2), resource(10, 2, 3), resource(10, 3, 2), resource(100, 1, 3)];
+        pass.place_teams(&samples);
+        let teams: Vec<_> =
+            pass.deaths.iter().map(|d| (d.victim_team, d.attacker_team, d.assister_team)).collect();
+        assert_eq!(
+            teams,
+            [
+                (Some(2), Some(3), Some(2)),
+                (Some(3), None, None), // the world and nobody have no team
+                (Some(3), Some(3), None),
+                (None, None, None), // before any sample
+            ]
+        );
     }
 
     fn neo_name(tick: u32, entity_id: u32, name: &str) -> NeoNameChange {
