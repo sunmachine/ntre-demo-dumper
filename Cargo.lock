@@ -418,7 +418,7 @@ dependencies = [
 
 [[package]]
 name = "ntre-demo-dumper"
-version = "0.14.0"
+version = "0.14.1"
 dependencies = [
  "anyhow",
  "clap",
