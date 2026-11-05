@@ -90,12 +90,13 @@ generic `game_events` table from these messages. The signon's
 columns and the `server_cvars` table. The NT;RE build version itself is not
 in this data: the only networked copies of it are client convars flagged
 `FCVAR_USERINFO`, sent from client to server for the connect-time integrity
-check, never from server to client (upstream NeotokyoRebuild/neo
-`src/game/shared/neo/neo_version.cpp:65` and `:74`,
-`src/game/shared/neo/neo_gamerules.cpp:3459-3483`).
+check, never from server to client (upstream NeotokyoRebuild/neo at
+`bea96408`, `src/game/shared/neo/neo_version.cpp:66` and `:75`,
+`src/game/shared/neo/neo_gamerules.cpp:3632-3657`).
 
 SourceTV relays only the game events that `CHLTVDirector::GetModEvents`
-names, in upstream `src/game/server/hltvdirector.cpp:238-257`. They are
+names, in upstream at `bea96408`,
+`src/game/server/hltvdirector.cpp:238-257`. They are
 `hltv_status`, `hltv_chat`, `player_connect`, `player_disconnect`,
 `player_team`, `player_info`, `server_cvar`, `player_death`,
 `player_chat`, `round_start` and `round_end`. NT;RE's own events, such as
@@ -116,7 +117,7 @@ those updates, and the roster takes late joiners from them in both
 recording types.
 
 NT;RE's client listens for `player_ping`, `ghost_enemy_callout`,
-`team_score` and `player_rankchange` (upstream
+`team_score` and `player_rankchange` (upstream at `bea96408`,
 `src/game/client/neo/ui/neo_hud_player_ping.cpp:102`,
 `src/game/client/neo/ui/neo_hud_compass.cpp:66`,
 `src/game/client/neo/game_controls/neo_teammenu.cpp:113`,
@@ -126,7 +127,7 @@ carry them and the tables built from them are POV only. The server fires
 (`src/game/server/neo/bot/behavior/neo_bot_ctg_carrier.cpp:100`).
 
 Game events name players by userid, which the engine documents as "local
-server user ID, unique while server is running" (upstream
+server user ID, unique while server is running" (upstream at `bea96408`,
 `src/public/cdll_int.h:95`). It is a per-connection counter. On three
 2026-03-19 SourceTV recordings of one server, taken on consecutive maps,
 11 of 13 Steam IDs keep one userid throughout, and the two players who
@@ -147,9 +148,9 @@ When a round ends the match or leads into sudden death, `SetWinningTeam`
 substitutes "Team X wins the match!", "The match is tied!" or "Next round:
 Sudden death!" for the round's own reason text, but the `RoundResult`
 message's team field still names that round's winner, or `tie` (upstream
-`src/game/shared/neo/neo_gamerules.cpp:3813-3866`, `:3906`). `rounds`
-recovers the round's real reason from that team field and the game state at
-the round's end tick instead.
+at `bea96408`, `src/game/shared/neo/neo_gamerules.cpp:3990-4036`,
+`:4084`). `rounds` recovers the round's real reason from that team field
+and the game state at the round's end tick instead.
 
 ## Entity layer
 
@@ -181,12 +182,12 @@ and is empty while they set none (upstream at `bea96408`,
 resource carries a `m_szNeoName` array too, but it holds the name as
 `GetNeoPlayerName` returns it: the Steam name for a player who set no neo
 name or turned neo names off, and a duplicate suffix such as `(2)`
-(`src/game/server/player_resource.cpp:159-171`,
+(at `bea96408`, `src/game/server/player_resource.cpp:159-171`,
 `src/game/server/neo/neo_player.cpp:1740-1771`). The roster therefore
 takes the entity's property, and credits each change to the connection
 that held the entity slot at that tick. `rounds` reads both at each round
 end. The server sends both entities to every client whatever their
-position (upstream `src/game/shared/gamerules.cpp:102-106` and
+position (upstream at `bea96408`, `src/game/shared/gamerules.cpp:102-106` and
 `src/game/shared/neo/neo_ghost_cap_point.cpp:102-105`), so POV recordings
 carry them too. A mid-file decode error degrades to a warning and keeps all
 samples decoded so far; frame-level extraction is never affected.

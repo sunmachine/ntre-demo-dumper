@@ -17,7 +17,7 @@ so if you add a column, document it.
 - **Three player identities.** A `steamid` names a person and is the same
   in every demo, so it is the key to join event tables on, within a demo
   or across demos. A `userid` names one connection to one server. The
-  server counts connections upward from its start (upstream
+  server counts connections upward from its start (upstream at `bea96408`,
   `src/public/cdll_int.h:95`), so a player keeps their userid across map
   changes, gets a new one on rejoining, and has an unrelated one on another
   server or night. An `entity_id` is the player's slot in the entity list,
@@ -357,13 +357,13 @@ rows have no killer, and `ghoster` describes the victim too.
 
 A world death is a death no player caused. Its `attacker_userid` is 0 and
 its `attacker_name` is NULL. The game then puts the class name of whatever
-dealt the damage in `weapon` (upstream
-`src/game/shared/neo/neo_gamerules.cpp:4367`). `trigger_hurt` is a damage
+dealt the damage in `weapon` (upstream at `bea96408`,
+`src/game/shared/neo/neo_gamerules.cpp:4533-4536`). `trigger_hurt` is a damage
 zone the map author placed, such as a pit or an out-of-bounds area.
 `worldspawn` is the map itself, as in a fatal fall. `suicide` is 1 on
 every world death, because the game sets it whenever the killer is not a
-player (`:4413`). `headshot` reports the last body part hit before the
-death (`:4412`), so on a world death it describes an earlier hit and not
+player (`:4581`). `headshot` reports the last body part hit before the
+death (`:4580`), so on a world death it describes an earlier hit and not
 the death.
 
 The teams come from the player resource rather than the player entity,

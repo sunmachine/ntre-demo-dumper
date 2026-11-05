@@ -95,7 +95,7 @@ pub struct CarrierChange {
 
 /// One change of a player entity's `m_szNeoName`, the name the player set
 /// with `neo_name`. The prop is empty while the player has set none
-/// (upstream `neo_player.cpp:1792-1810`).
+/// (upstream at `bea96408`, `neo_player.cpp:1792-1810`).
 pub struct NeoNameChange {
     pub tick: u32,
     pub entity_id: u32,

@@ -91,8 +91,8 @@ fn near_end(tick: i32, end_tick: i32) -> bool {
 
 /// Whether every capture zone active before the window around `end_tick`
 /// switched off within it. A ghost capture and a VIP escort both clear
-/// every zone this way when they end a round (upstream
-/// `neo_gamerules.cpp:1526-1547`, `:1643-1656`).
+/// every zone this way when they end a round (upstream at `bea96408`,
+/// `neo_gamerules.cpp:1458-1468`, `:1575-1585`).
 fn zones_switched_off(end_tick: i32, evidence: &Evidence) -> bool {
     let end = i64::from(end_tick);
     // Each zone's state before the window opens and after it closes.
@@ -151,8 +151,8 @@ struct End {
 
 /// Whether a RoundResult message is one of the three texts
 /// `CNEORules::SetWinningTeam` substitutes when a round ends the match or
-/// leads into sudden death, instead of the round's own reason (upstream
-/// `neo_gamerules.cpp:3813-3866`).
+/// leads into sudden death, instead of the round's own reason (upstream at
+/// `bea96408`, `neo_gamerules.cpp:3990-4036`).
 fn is_match_end_text(message: &str) -> bool {
     ["wins the match", "The match is tied!", "Next round: Sudden death!"]
         .iter()
@@ -162,8 +162,8 @@ fn is_match_end_text(message: &str) -> bool {
 /// Maps a round-end message to a short win-reason code.
 ///
 /// The phrases are the victory strings NEO_VICTORY_* builds in upstream
-/// NeotokyoRebuild/neo's `src/game/shared/neo/neo_gamerules.cpp` (lines
-/// 3864-3899), plus the deathmatch message next to it (line 1733). NULL
+/// NeotokyoRebuild/neo's `src/game/shared/neo/neo_gamerules.cpp` at
+/// `bea96408` (lines 4044-4069), plus the deathmatch message (line 1665). NULL
 /// means the reason could not be identified from the text alone: an empty
 /// message, or a match-end text such as "wins the match", which replaces
 /// the round's own reason. `derive` recovers that case separately, in
@@ -201,8 +201,8 @@ fn class_at(entity_id: u32, tick: i32, samples: &[PlayerSample]) -> Option<i64> 
 }
 
 /// Whether a death within the window around `end_tick` was the VIP's, NT;RE
-/// class 3 (`neo_enums.h:21`), ending the round for the opposing team
-/// (upstream `neo_gamerules.cpp:1619`).
+/// class 3 (upstream at `bea96408`, `neo_enums.h:21`), ending the round for
+/// the opposing team (`neo_gamerules.cpp:1551`).
 fn vip_killed(end_tick: i32, evidence: &Evidence) -> bool {
     const VIP_CLASS: i64 = 3;
     evidence.deaths.iter().filter(|k| near_end(k.tick, end_tick)).any(|k| {
@@ -238,9 +238,9 @@ fn losing_team(winner: &str) -> Option<i64> {
 /// Recovers a round's real win reason when a match-end text has replaced
 /// it, from the RoundResult's team field and the game state at the round's
 /// end tick. Checked in the order the server itself checks a round
-/// (`neo_gamerules.cpp:1547`, `:1589`, `:1698`); the first that matches
-/// wins, and forfeits and points wins hidden behind the match text stay
-/// unrecoverable (None).
+/// (upstream at `bea96408`, `neo_gamerules.cpp:1479`, `:1551`, `:1588`,
+/// `:1630`); the first that matches wins, and forfeits and points wins
+/// hidden behind the match text stay unrecoverable (None).
 fn recovered_reason(winner: &str, end_tick: i32, evidence: &Evidence) -> Option<String> {
     if winner == "tie" {
         return Some("tie".to_string());
@@ -359,10 +359,11 @@ pub fn derive(
 ///
 /// The cut is the start tick of the first round numbered after `last`. The
 /// server fires that round's `round_start` event, respawns the players and
-/// prints its start text in one call (upstream `neo_gamerules.cpp:2879`,
-/// `:3004`, `:3032`), so all of the next round lies at or after that tick, while
-/// round `last` keeps its end and the time after it. A repeated number, as
-/// after an admin pause, is not later, so a restarted round `last` stays.
+/// prints its start text in one call (upstream at `bea96408`,
+/// `neo_gamerules.cpp:2879`, `:3004`, `:3032`), so all of the next round lies
+/// at or after that tick, while round `last` keeps its end and the time after
+/// it. A repeated number, as after an admin pause, is not later, so a
+/// restarted round `last` stays.
 pub fn cut_after(rounds: &mut Vec<Round>, last: i32) -> Result<Option<i32>> {
     let Some(i) = rounds.iter().position(|r| r.number.is_some_and(|n| n > last)) else {
         return Ok(None);
