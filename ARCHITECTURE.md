@@ -125,7 +125,10 @@ server user ID, unique while server is running" (upstream
 11 of 13 Steam IDs keep one userid throughout, and the two players who
 rejoined come back with a higher one: `SELECT steamid,
 group_concat(DISTINCT userid) FROM players GROUP BY steamid`. The event
-tables therefore store the roster's Steam ID beside each userid.
+tables therefore store the roster's Steam ID beside each userid. Tables
+that name a player by entity slot store the Steam ID of the connection
+holding the slot at the row's tick, by the rule `slot_holder` applies
+(`extract/net.rs`).
 
 A round's start tick is the tick of its `ROUND N STARTED` text.
 `CNEORules::StartNextRound` fires `round_start`, respawns every player and

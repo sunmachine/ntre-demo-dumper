@@ -25,6 +25,13 @@ so if you add a column, document it.
   holds all three and is the join hub:
   `deaths.victim_steamid = players.steamid`,
   `player_samples.entity_id = players.entity_id`.
+- **A Steam ID on every player row.** Every table that names a player
+  carries their `steamid`, so no query needs the hub just to name one.
+  A slot passes to the next player who joins after its holder leaves, so a
+  table that names players by `entity_id` stores the Steam ID of the
+  connection holding the slot at the row's tick: the latest roster player
+  on that slot whose `first_seen_tick` is at or before it. It is NULL for
+  a slot no roster player held by then.
 - **When `userid` is still needed.** Every bot's `steamid` is the literal
   `BOT`, so only `userid` tells two bots apart. The `userid` fields inside
   `game_events` are the wire values and join `players.userid`. A player
@@ -75,27 +82,27 @@ rows are recomputed on every parse and may change when a rule improves.
 | `demos` | reference | | `id` = every table's `demo_id` |
 | `players` | reference | | the join hub |
 | `server_cvars` | reference | | none |
-| `player_samples` | tick series | PVS-limited in POV | `entity_id` |
+| `player_samples` | tick series | PVS-limited in POV | `steamid` |
 | `ghost_samples` | tick series | PVS-limited in POV | none (ghost entity) |
-| `player_resource` | tick series | | `entity_id` |
+| `player_resource` | tick series | | `steamid` |
 | `alive_counts` | tick series | | none (per team) |
 | `pov_samples` | tick series | | none (the recorder) |
 | `recorder_inputs` | tick series | POV only | none (the recorder) |
 | `deaths` | event log | | `steamid` |
-| `attacker_hits` | event log | SourceTV only, pre-July-2026 builds | `entity_id` |
+| `attacker_hits` | event log | SourceTV only, pre-July-2026 builds | `steamid` |
 | `player_pings` | event log | POV only | `steamid` |
-| `ghost_callouts` | event log | POV only | `userid` (bots only), `entity_id` |
+| `ghost_callouts` | event log | POV only | `steamid`, `userid` (bots only) |
 | `team_scores` | event log | POV only | none (per team) |
 | `team_changes` | event log | | `steamid` |
 | `rank_changes` | event log | POV only | `steamid` |
 | `round_starts` | event log | | none |
 | `round_results` | event log | | none |
-| `chat` | event log | | `entity_id` |
+| `chat` | event log | | `steamid` |
 | `console_cmds` | event log | POV only | none (the recorder) |
 | `game_events` | event log | | varies (JSON fields) |
 | `announcements` | derived | | none |
 | `rounds` | derived | | `steamid` |
-| `inferred_hits` | inferred | | `entity_id` |
+| `inferred_hits` | inferred | | `steamid` |
 
 ## Reference tables
 
@@ -123,6 +130,7 @@ One row per parsed demo file; every other table hangs off `id`.
 | `tick_interval` | seconds per server tick, e.g. 0.015 |
 | `map_md5` | MD5 of the map file, which tells versions of one map apart |
 | `recorder_entity_id` | the recording client's entity; joins `players.entity_id` |
+| `recorder_steamid` | the recording player's Steam ID at the start of the recording; joins `players.steamid`. NULL for a SourceTV recording, whose recorder is the SourceTV client, which the roster leaves out |
 | `parser_version` | the dumper version that wrote this demo's rows |
 | `last_round` | the `--last-round` this demo was parsed with, so its rows end where the next round began; NULL when the whole demo was parsed |
 
@@ -183,6 +191,7 @@ In POV demos, players well out of the recorder's sight produce no rows.
 |---|---|
 | `tick` | sample time |
 | `entity_id` | joins `players.entity_id` |
+| `steamid` | the player holding the slot at `tick`; joins `players.steamid` |
 | `x`, `y`, `z` | world position (player origin, at the feet) |
 | `eye_pitch`, `eye_yaw` | aim direction, degrees |
 | `vx`, `vy`, `vz` | velocity, world units/s |
@@ -215,6 +224,7 @@ times, PVS included.
 |---|---|
 | `tick` | sample time |
 | `entity_id` | player slot; joins `players.entity_id` |
+| `steamid` | the player holding the slot at `tick`; joins `players.steamid` |
 | `team` | `m_iTeam`, coded as in `player_samples.team` |
 | `alive` | `m_bAlive`: 1 if the player was alive at the last resource refresh |
 | `connected` | `m_bConnected`: 1 while a player holds the slot. A disconnect clears only this, so a slot keeps its last `team` and `alive` after its player leaves (upstream at `bea96408`, `src/game/server/player_resource.cpp:250`) |
@@ -410,7 +420,9 @@ never receives. Demos from earlier builds still populate this table.
 |---|---|
 | `tick` | when the hit landed |
 | `victim_entity_id` | joins `players.entity_id` |
+| `victim_steamid` | joins `players.steamid` |
 | `attacker_entity_id` | joins `players.entity_id` |
+| `attacker_steamid` | joins `players.steamid` |
 | `accumulator` | fractional damage carry; a `0` row is the victim's respawn reset |
 
 ### `player_pings`
@@ -444,6 +456,7 @@ compass. Players never send callouts, so a game without bots has no rows.
 | `userid` | ghost carrier, from the event; joins `players.userid` and is the column that identifies the bot |
 | `team` | carrier's team, coded as in `player_samples.team` |
 | `target_entity_id` | spotted enemy; joins `players.entity_id` |
+| `target_steamid` | spotted enemy's Steam ID; joins `players.steamid` |
 | `x`, `y`, `z` | spotted enemy's world position |
 
 ### `team_scores`
@@ -505,6 +518,7 @@ SayText2 user messages, control codes stripped.
 |---|---|
 | `tick` | when the line was sent |
 | `client_entity` | sender's entity slot; joins `players.entity_id` |
+| `steamid` | sender's Steam ID; joins `players.steamid`. NULL for a server message |
 | `from_name` | sender name as transmitted (may be empty for server messages) |
 | `text` | the message |
 | `team_chat` | 1 for team-only chat |
@@ -605,7 +619,9 @@ closest at the victim on that tick.
 |---|---|
 | `tick` | when the victim's health dropped |
 | `victim_entity_id` | joins `players.entity_id` |
+| `victim_steamid` | joins `players.steamid` |
 | `attacker_entity_id` | joins `players.entity_id`; NULL when no enemy's aim was within 15 degrees |
+| `attacker_steamid` | joins `players.steamid`; NULL when `attacker_entity_id` is |
 | `damage` | the health drop, so overkill on the fatal hit |
 | `aim_error` | degrees between the attacker's view direction and the victim; NULL for kill-event rows |
 | `confidence` | 1 for kill-event rows; otherwise falls from 1 at zero aim error to 0 at 20 degrees |

@@ -22,6 +22,7 @@ use crate::demo::header::DemoHeader;
 use crate::demo::identity::DemoIdentity;
 use crate::demo::net::ServerInfo;
 use crate::extract::announcements::Announcement;
+use crate::extract::net::SlotOwners;
 use crate::extract::rounds::Round;
 
 /// Looks a userid up in the demo's roster and returns that player's Steam
@@ -64,6 +65,7 @@ CREATE TABLE IF NOT EXISTS demos (
     tick_interval REAL,            -- server seconds per tick, shortest decimal form
     map_md5 TEXT,                  -- hex MD5 of the server's map file
     recorder_entity_id INTEGER,    -- recording client's entity slot
+    recorder_steamid TEXT,         -- the recording player; NULL for SourceTV
     parser_version TEXT NOT NULL,  -- dumper version that wrote this demo's rows
     last_round INTEGER             -- --last-round the demo was parsed with; NULL = the whole demo
 );
@@ -93,6 +95,7 @@ CREATE TABLE IF NOT EXISTS player_samples (
     demo_id INTEGER NOT NULL REFERENCES demos(id),
     tick INTEGER NOT NULL,
     entity_id INTEGER NOT NULL,   -- joins players.entity_id
+    steamid TEXT,                 -- the slot's player at this tick; joins players.steamid
     x REAL NOT NULL, y REAL NOT NULL, z REAL NOT NULL,  -- player origin (feet)
     eye_pitch REAL NOT NULL, eye_yaw REAL NOT NULL,     -- degrees
     vx REAL NOT NULL, vy REAL NOT NULL, vz REAL NOT NULL,  -- velocity, units/s
@@ -122,6 +125,7 @@ CREATE TABLE IF NOT EXISTS player_resource (
     demo_id INTEGER NOT NULL REFERENCES demos(id),
     tick INTEGER NOT NULL,
     entity_id INTEGER NOT NULL,   -- player slot; joins players.entity_id
+    steamid TEXT,                 -- the slot's player at this tick; joins players.steamid
     team INTEGER NOT NULL,        -- 0 unassigned, 1 spectator, 2 Jinrai, 3 NSF
     alive INTEGER NOT NULL,       -- 1 if alive at the last resource refresh
     connected INTEGER NOT NULL,   -- 1 while a player holds the slot; a disconnect clears only this
@@ -218,7 +222,9 @@ CREATE TABLE IF NOT EXISTS attacker_hits (
     demo_id INTEGER NOT NULL REFERENCES demos(id),
     tick INTEGER NOT NULL,
     victim_entity_id INTEGER NOT NULL,   -- joins players.entity_id
+    victim_steamid TEXT,                 -- joins players.steamid
     attacker_entity_id INTEGER NOT NULL, -- joins players.entity_id
+    attacker_steamid TEXT,               -- joins players.steamid
     accumulator REAL NOT NULL            -- fractional carry; 0 = respawn reset
 );
 
@@ -244,6 +250,7 @@ CREATE TABLE IF NOT EXISTS ghost_callouts (
     userid INTEGER NOT NULL,           -- ghost carrier; joins players.userid
     team INTEGER NOT NULL,             -- carrier's team
     target_entity_id INTEGER NOT NULL, -- spotted enemy; joins players.entity_id
+    target_steamid TEXT,               -- spotted enemy; joins players.steamid
     x INTEGER NOT NULL, y INTEGER NOT NULL, z INTEGER NOT NULL  -- spotted position
 );
 
@@ -304,6 +311,7 @@ CREATE TABLE IF NOT EXISTS chat (
     demo_id INTEGER NOT NULL REFERENCES demos(id),
     tick INTEGER NOT NULL,
     client_entity INTEGER NOT NULL,
+    steamid TEXT,                  -- sender; joins players.steamid; NULL for the server
     from_name TEXT NOT NULL,
     text TEXT NOT NULL,
     team_chat INTEGER NOT NULL
@@ -346,7 +354,9 @@ CREATE TABLE IF NOT EXISTS inferred_hits (
     demo_id INTEGER NOT NULL REFERENCES demos(id),
     tick INTEGER NOT NULL,
     victim_entity_id INTEGER NOT NULL,   -- joins players.entity_id
+    victim_steamid TEXT,                 -- joins players.steamid
     attacker_entity_id INTEGER,          -- joins players.entity_id; NULL = unattributed
+    attacker_steamid TEXT,               -- joins players.steamid
     damage INTEGER NOT NULL,             -- victim's health drop at this tick
     aim_error REAL,                      -- degrees between attacker's aim and the victim
     confidence REAL NOT NULL,            -- 0 to 1
@@ -445,6 +455,7 @@ impl Db {
         path: &str,
         h: &DemoHeader,
         si: Option<&ServerInfo>,
+        recorder_steamid: Option<&str>,
         last_round: Option<i32>,
     ) -> Result<()> {
         let os = si.map(|s| match s.os {
@@ -462,10 +473,10 @@ impl Db {
                                 client, map, game_directory, playback_seconds,
                                 playback_ticks, playback_frames, tickrate, sourcetv,
                                 dedicated, server_os, host_name, max_clients,
-                                tick_interval, map_md5, recorder_entity_id, parser_version,
-                                last_round)
+                                tick_interval, map_md5, recorder_entity_id, recorder_steamid,
+                                parser_version, last_round)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
-                     ?17, ?18, ?19, ?20, ?21, ?22, ?23)",
+                     ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
             rusqlite::params![
                 identity.id,
                 identity.sha256,
@@ -488,6 +499,7 @@ impl Db {
                 tick_interval,
                 md5,
                 si.map(|s| s.player_slot as u32 + 1),
+                recorder_steamid,
                 env!("CARGO_PKG_VERSION"),
                 last_round,
             ],
@@ -692,11 +704,12 @@ impl Db {
         demo_id: i64,
         callouts: &[crate::extract::net::GhostCallout],
         steamid_of: SteamIdOf,
+        owners: &SlotOwners,
     ) -> Result<()> {
         let mut ins = self.conn.prepare(
             "INSERT INTO ghost_callouts (demo_id, tick, steamid, userid, team, target_entity_id,
-                                         x, y, z)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                                         target_steamid, x, y, z)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         )?;
         for c in callouts {
             ins.execute(rusqlite::params![
@@ -706,6 +719,7 @@ impl Db {
                 c.userid,
                 c.team,
                 c.target_entity_id,
+                owners.steamid_at(c.target_entity_id, i64::from(c.tick)),
                 c.x,
                 c.y,
                 c.z,
@@ -807,14 +821,25 @@ impl Db {
         Ok(())
     }
 
-    pub fn insert_chat(&self, demo_id: i64, chat: &[crate::extract::net::ChatLine]) -> Result<()> {
+    pub fn insert_chat(
+        &self,
+        demo_id: i64,
+        chat: &[crate::extract::net::ChatLine],
+        owners: &SlotOwners,
+    ) -> Result<()> {
         let mut ins = self.conn.prepare(
-            "INSERT INTO chat (demo_id, tick, client_entity, from_name, text, team_chat)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO chat (demo_id, tick, client_entity, steamid, from_name, text, team_chat)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         )?;
         for c in chat {
             ins.execute(rusqlite::params![
-                demo_id, c.tick, c.client_entity, c.from, c.text, c.team_chat,
+                demo_id,
+                c.tick,
+                c.client_entity,
+                owners.steamid_at(c.client_entity, i64::from(c.tick)),
+                c.from,
+                c.text,
+                c.team_chat,
             ])?;
         }
         Ok(())
@@ -834,17 +859,19 @@ impl Db {
         &self,
         demo_id: i64,
         samples: &[crate::extract::entities::PlayerSample],
+        owners: &SlotOwners,
     ) -> Result<()> {
         let mut ins = self.conn.prepare(
-            "INSERT INTO player_samples (demo_id, tick, entity_id, x, y, z, eye_pitch, eye_yaw,
-                                         vx, vy, vz, weapon, health, team, class, camo,
+            "INSERT INTO player_samples (demo_id, tick, entity_id, steamid, x, y, z, eye_pitch,
+                                         eye_yaw, vx, vy, vz, weapon, health, team, class, camo,
                                          alive, in_pvs)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
-                     ?17, ?18)",
+                     ?17, ?18, ?19)",
         )?;
         for s in samples {
+            let steamid = owners.steamid_at(s.entity_id, i64::from(s.tick));
             ins.execute(rusqlite::params![
-                demo_id, s.tick, s.entity_id, s.x, s.y, s.z, s.eye_pitch, s.eye_yaw,
+                demo_id, s.tick, s.entity_id, steamid, s.x, s.y, s.z, s.eye_pitch, s.eye_yaw,
                 s.vx, s.vy, s.vz, s.weapon, s.health, s.team, s.class_num, s.camo,
                 s.alive, s.in_pvs,
             ])?;
@@ -886,17 +913,19 @@ impl Db {
         &self,
         demo_id: i64,
         samples: &[crate::extract::entities::ResourceSample],
+        owners: &SlotOwners,
     ) -> Result<()> {
         let mut ins = self.conn.prepare(
-            "INSERT INTO player_resource (demo_id, tick, entity_id, team, alive, connected, xp,
-                                          score, deaths, ping)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            "INSERT INTO player_resource (demo_id, tick, entity_id, steamid, team, alive,
+                                          connected, xp, score, deaths, ping)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         )?;
         for s in samples {
             ins.execute(rusqlite::params![
                 demo_id,
                 s.tick,
                 s.entity_id,
+                owners.steamid_at(s.entity_id, i64::from(s.tick)),
                 s.team,
                 s.alive,
                 s.connected,
@@ -913,18 +942,23 @@ impl Db {
         &self,
         demo_id: i64,
         hits: &[crate::extract::inferred_hits::InferredHit],
+        owners: &SlotOwners,
     ) -> Result<()> {
         let mut ins = self.conn.prepare(
-            "INSERT INTO inferred_hits (demo_id, tick, victim_entity_id, attacker_entity_id, damage,
-                                        aim_error, confidence, method)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            "INSERT INTO inferred_hits (demo_id, tick, victim_entity_id, victim_steamid,
+                                        attacker_entity_id, attacker_steamid, damage, aim_error,
+                                        confidence, method)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         )?;
         for h in hits {
+            let tick = i64::from(h.tick);
             ins.execute(rusqlite::params![
                 demo_id,
                 h.tick,
                 h.victim_entity_id,
+                owners.steamid_at(h.victim_entity_id, tick),
                 h.attacker_entity_id,
+                h.attacker_entity_id.and_then(|a| owners.steamid_at(a, tick)),
                 h.damage,
                 h.aim_error,
                 h.confidence,
@@ -938,15 +972,23 @@ impl Db {
         &self,
         demo_id: i64,
         samples: &[crate::extract::entities::DamageSample],
+        owners: &SlotOwners,
     ) -> Result<()> {
         let mut ins = self.conn.prepare(
-            "INSERT INTO attacker_hits (demo_id, tick, victim_entity_id, attacker_entity_id,
-                                        accumulator)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO attacker_hits (demo_id, tick, victim_entity_id, victim_steamid,
+                                        attacker_entity_id, attacker_steamid, accumulator)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         )?;
         for s in samples {
+            let tick = i64::from(s.tick);
             ins.execute(rusqlite::params![
-                demo_id, s.tick, s.victim_entity_id, s.attacker_entity_id, s.damage,
+                demo_id,
+                s.tick,
+                s.victim_entity_id,
+                owners.steamid_at(s.victim_entity_id, tick),
+                s.attacker_entity_id,
+                owners.steamid_at(s.attacker_entity_id, tick),
+                s.damage,
             ])?;
         }
         Ok(())
@@ -989,7 +1031,7 @@ mod tests {
             playback_frames: 0,
             signon_length: 0,
         };
-        db.insert_demo(&identity, "first.dem", &header, None, None).unwrap();
+        db.insert_demo(&identity, "first.dem", &header, None, None, None).unwrap();
         assert_eq!(
             db.find_demo(&identity.sha256).unwrap(),
             Some((identity.id, "first.dem".to_string()))
@@ -1071,8 +1113,8 @@ mod tests {
         };
         let cut = DemoIdentity::of(b"cut");
         let other = DemoIdentity::of(b"other");
-        db.insert_demo(&cut, "cut.dem", &header, None, Some(2)).unwrap();
-        db.insert_demo(&other, "other.dem", &header, None, None).unwrap();
+        db.insert_demo(&cut, "cut.dem", &header, None, None, Some(2)).unwrap();
+        db.insert_demo(&other, "other.dem", &header, None, None, None).unwrap();
         let (cut, other) = (cut.id, other.id);
         let mut death = db
             .conn
@@ -1184,7 +1226,7 @@ mod tests {
 
         let db = super::Db::open(std::path::Path::new(":memory:")).unwrap();
         let identity = crate::demo::identity::DemoIdentity::of(b"tick interval");
-        db.insert_demo(&identity, "path", &header, Some(&info), None).unwrap();
+        db.insert_demo(&identity, "path", &header, Some(&info), None, None).unwrap();
         let demo_id = identity.id;
         let stored: f64 = db
             .conn

@@ -137,6 +137,40 @@ pub fn slot_holder(players: &HashMap<u32, Player>, entity_id: u32, tick: i32) ->
         .map(|p| p.user_id)
 }
 
+/// The Steam ID of the connection holding each entity slot at a tick, by
+/// the same rule as `slot_holder`. Tables that name a player by slot store
+/// it beside the slot, and `player_samples` asks for every row, so the
+/// holders are sorted once per slot instead of scanned per row.
+pub struct SlotOwners {
+    /// Per slot, `(first_seen_tick, user_id, steam_id)` in ascending order.
+    by_slot: HashMap<u32, Vec<(i32, u32, String)>>,
+}
+
+impl SlotOwners {
+    pub fn new(players: &HashMap<u32, Player>) -> Self {
+        let mut by_slot: HashMap<u32, Vec<(i32, u32, String)>> = HashMap::new();
+        for p in players.values() {
+            by_slot.entry(p.entity_id).or_default().push((
+                p.first_seen_tick,
+                p.user_id,
+                p.steam_id.clone(),
+            ));
+        }
+        for holders in by_slot.values_mut() {
+            holders.sort_unstable();
+        }
+        SlotOwners { by_slot }
+    }
+
+    /// The Steam ID of whoever held `entity_id` at `tick`, or None for a
+    /// slot no roster player held by then.
+    pub fn steamid_at(&self, entity_id: u32, tick: i64) -> Option<&str> {
+        let holders = self.by_slot.get(&entity_id)?;
+        let after = holders.partition_point(|&(first_seen, _, _)| i64::from(first_seen) <= tick);
+        Some(holders[after.checked_sub(1)?].2.as_str())
+    }
+}
+
 #[derive(Default)]
 pub struct NetPass {
     defs: EventDefs,
@@ -604,13 +638,14 @@ impl FrameExtractor for NetPass {
         let steamid_of = |userid: u32| self.steamid_of(userid);
         db.insert_deaths(demo_id, &self.deaths, &name_of, &steamid_of)?;
         db.insert_player_pings(demo_id, &self.pings, &steamid_of)?;
-        db.insert_ghost_callouts(demo_id, &self.callouts, &steamid_of)?;
+        let owners = SlotOwners::new(&self.players);
+        db.insert_ghost_callouts(demo_id, &self.callouts, &steamid_of, &owners)?;
         db.insert_team_scores(demo_id, &self.team_scores)?;
         db.insert_team_changes(demo_id, &self.team_changes, &steamid_of)?;
         db.insert_rank_changes(demo_id, &self.rank_changes, &steamid_of)?;
         db.insert_round_starts(demo_id, &self.round_starts)?;
         db.insert_round_results(demo_id, &self.round_results)?;
-        db.insert_chat(demo_id, &self.chat)?;
+        db.insert_chat(demo_id, &self.chat, &owners)?;
         db.insert_game_events(demo_id, &self.events)?;
         db.insert_server_cvars(demo_id, &self.cvars)?;
         let mut summary: Summary = vec![
@@ -739,6 +774,23 @@ mod tests {
             ..NetPass::default()
         };
         assert_eq!(pass.deaths_missing_from_roster(), 3);
+    }
+
+    #[test]
+    fn slot_owners_follow_the_slot_to_its_next_player() {
+        // Userid 1 holds slot 5 from the start; userid 2 takes it at tick 100.
+        let mut first = roster_player(1);
+        first.entity_id = 5;
+        first.steam_id = "[U:1:1]".into();
+        let mut second = roster_player(2);
+        second.entity_id = 5;
+        second.first_seen_tick = 100;
+        second.steam_id = "[U:1:2]".into();
+        let owners = SlotOwners::new(&HashMap::from([(1, first), (2, second)]));
+        assert_eq!(owners.steamid_at(5, 0), Some("[U:1:1]"));
+        assert_eq!(owners.steamid_at(5, 99), Some("[U:1:1]"));
+        assert_eq!(owners.steamid_at(5, 100), Some("[U:1:2]"));
+        assert_eq!(owners.steamid_at(6, 100), None);
     }
 
     fn resource(tick: u32, entity_id: u32, team: i64) -> ResourceSample {
