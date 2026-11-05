@@ -14,6 +14,7 @@ use crate::demo::net::{
 };
 use crate::demo::stringtables::{parse_userinfo, parse_userinfo_update, PlayerInfo};
 use crate::extract::entities::NeoNameChange;
+use crate::extract::rounds::{place, Round};
 use crate::output::sqlite::Db;
 
 pub struct Death {
@@ -26,6 +27,11 @@ pub struct Death {
     pub suicide: bool,
     pub explosive: bool,
     pub ghoster: bool,
+    /// The round the death fell in, set by `NetPass::place_deaths` once the
+    /// rounds are derived; None before the first round began.
+    pub round_number: Option<i32>,
+    /// The death fell after its round ended and before the next one began.
+    pub post_round: bool,
 }
 
 pub struct ChatLine {
@@ -323,6 +329,16 @@ impl NetPass {
         }
     }
 
+    /// Give each death the round it fell in. Rounds need the entity pass
+    /// and the announcements, so they exist only after the frame walk.
+    pub fn place_deaths(&mut self, rounds: &[Round]) {
+        for d in &mut self.deaths {
+            let round = place(rounds, d.tick);
+            d.round_number = round.as_ref().and_then(|r| r.number);
+            d.post_round = round.is_some_and(|r| r.post_round);
+        }
+    }
+
     /// How many deaths name a victim, attacker or assister that the roster
     /// never saw. Those rows get NULL names and Steam IDs. Userid 0 is the
     /// world as attacker and nobody as assister, so it does not count.
@@ -346,6 +362,8 @@ impl NetPass {
                 suicide: bool_field(fields, "suicide"),
                 explosive: bool_field(fields, "explosive"),
                 ghoster: bool_field(fields, "ghoster"),
+                round_number: None,
+                post_round: false,
             }),
             "player_ping" => self.pings.push(Ping {
                 tick,
@@ -665,6 +683,8 @@ mod tests {
             suicide: false,
             explosive: false,
             ghoster: false,
+            round_number: None,
+            post_round: false,
         }
     }
 
