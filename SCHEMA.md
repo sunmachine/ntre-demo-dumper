@@ -13,7 +13,12 @@ so if you add a column, document it.
   another name.
 - **Ticks and time.** All `tick` columns are server ticks. Convert to seconds
   with `tick / demos.tickrate` (NT;RE runs at ~66.67 ticks/s). Tick 0 is the
-  start of the recording, not the start of the match.
+  start of the recording, not the start of the match. A POV recording's
+  frames carry the player's client clock, which drifts from the server's,
+  so the dumper times every frame from the server tick its snapshot carries
+  instead. One entity therefore has at most one sample per tick in both
+  recording types. `recorder_inputs` can still hold several commands on
+  one tick, as the recording stores them.
 - **Three player identities.** A `steamid` names a person and is the same
   in every demo, so it is the key to join event tables on, within a demo
   or across demos. A `userid` names one connection to one server. The

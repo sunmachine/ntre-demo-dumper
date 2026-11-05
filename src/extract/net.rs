@@ -607,6 +607,9 @@ impl FrameExtractor for NetPass {
                             }
                             self.tables_created += 1;
                         }
+                        // The frame's tick already comes from this, through
+                        // `demo::clock::Clock`.
+                        NetMessage::Tick(_) => {}
                         NetMessage::UpdateStringTable { table_id, changed, data } => {
                             let Some((_, max_entries)) =
                                 self.userinfo_table.filter(|(id, _)| *id == table_id)

@@ -17,10 +17,13 @@
 use anyhow::Result;
 use std::collections::HashMap;
 
+use crate::demo::clock::Clock;
+
 use tf_demo_parser::demo::data::DemoTick;
 use tf_demo_parser::demo::message::packetentities::PacketEntity;
 use tf_demo_parser::demo::message::{Message, MessageType};
 use tf_demo_parser::demo::packet::datatable::{ParseSendTable, ServerClass};
+use tf_demo_parser::demo::packet::message::MessagePacketMeta;
 use tf_demo_parser::demo::parser::MessageHandler;
 use tf_demo_parser::demo::sendprop::{SendPropIdentifier, SendPropValue};
 use tf_demo_parser::{Demo, DemoParser, ParserState};
@@ -122,10 +125,12 @@ pub struct EntityOutput {
     pub warning: Option<String>,
 }
 
-/// Run the entity pass over the whole demo file.
-pub fn run(data: &[u8]) -> Result<EntityOutput> {
+/// Run the entity pass over the whole demo file, timing every update by
+/// `clock`.
+pub fn run(data: &[u8], clock: &Clock) -> Result<EntityOutput> {
     let demo = Demo::new(data);
-    let parser = DemoParser::new_with_analyser(demo.get_stream(), EntityAnalyser::default());
+    let analyser = EntityAnalyser { packet_ticks: clock.packet_ticks().to_vec(), ..EntityAnalyser::default() };
+    let parser = DemoParser::new_with_analyser(demo.get_stream(), analyser);
     let (_header, mut ticker) = parser.ticker()?;
     let mut warning = None;
     loop {
@@ -177,6 +182,14 @@ struct ResourceState {
 
 #[derive(Default)]
 struct EntityAnalyser {
+    /// The server-clock tick of each signon and packet frame, from
+    /// `demo::clock::Clock`, and how many of them the parser has reached.
+    /// tf-demo-parser labels messages with the frame header's tick, which a
+    /// POV recording's client clock skews.
+    packet_ticks: Vec<i32>,
+    packets_seen: usize,
+    /// The current packet's tick on that clock.
+    tick: u32,
     /// prop identifier -> bare prop name, for every prop in the sendtables
     prop_names: HashMap<SendPropIdentifier, String>,
     /// array-element props (numeric names): identifier -> (owner table, index)
@@ -640,10 +653,18 @@ impl MessageHandler for EntityAnalyser {
             .collect();
     }
 
-    fn handle_message(&mut self, message: &Message, tick: DemoTick, state: &ParserState) {
+    fn handle_packet_meta(&mut self, tick: DemoTick, _meta: &MessagePacketMeta, _state: &ParserState) {
+        // tf-demo-parser reaches signon and packet frames in file order, as
+        // the clock read them.
+        let clocked = self.packet_ticks.get(self.packets_seen).copied();
+        self.tick = clocked.and_then(|t| u32::try_from(t).ok()).unwrap_or(u32::from(tick));
+        self.packets_seen += 1;
+    }
+
+    fn handle_message(&mut self, message: &Message, _tick: DemoTick, state: &ParserState) {
         if let Message::PacketEntities(msg) = message {
             for entity in &msg.entities {
-                self.apply_entity(u32::from(tick), entity, state);
+                self.apply_entity(self.tick, entity, state);
             }
         }
     }
