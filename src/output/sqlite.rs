@@ -31,7 +31,7 @@ use crate::extract::rounds::Round;
 pub type SteamIdOf<'a> = &'a dyn Fn(u32) -> Option<String>;
 
 /// Stored as `PRAGMA user_version`; see the module comment for when to raise it.
-const SCHEMA_VERSION: i32 = 3;
+const SCHEMA_VERSION: i32 = 4;
 
 pub struct Db {
     conn: Connection,
@@ -75,7 +75,7 @@ CREATE TABLE IF NOT EXISTS players (
     id INTEGER PRIMARY KEY,
     demo_id INTEGER NOT NULL REFERENCES demos(id),
     entity_id INTEGER NOT NULL,    -- joins player_samples.entity_id, chat.client_entity
-    userid INTEGER NOT NULL,       -- joins kills.*_userid and game-event userid fields
+    userid INTEGER NOT NULL,       -- joins deaths.*_userid and game-event userid fields
     name TEXT NOT NULL,            -- Steam name, the latest if the player renamed
     neo_name TEXT,                 -- in-game name set with neo_name; NULL if none was seen
     steamid TEXT NOT NULL,
@@ -167,15 +167,15 @@ CREATE TABLE IF NOT EXISTS recorder_inputs (
 
 ---------------------------------------------------------------- event log
 
--- Kill feed from the player_death game event (NT;RE definition).
-CREATE TABLE IF NOT EXISTS kills (
+-- One row per death, from the player_death game event (NT;RE definition).
+CREATE TABLE IF NOT EXISTS deaths (
     id INTEGER PRIMARY KEY,
     demo_id INTEGER NOT NULL REFERENCES demos(id),
     tick INTEGER NOT NULL,
     victim_steamid TEXT,              -- joins players.steamid; NULL if not in the roster
     victim_userid INTEGER NOT NULL,   -- connection id; joins players.userid
     victim_name TEXT,                 -- resolved at parse time; NULL if unknown
-    attacker_steamid TEXT,            -- NULL for a world kill
+    attacker_steamid TEXT,            -- NULL for a world death
     attacker_userid INTEGER NOT NULL, -- 0 = world / environment
     attacker_name TEXT,
     assister_steamid TEXT,            -- NULL when nobody assisted
@@ -361,7 +361,7 @@ CREATE TABLE IF NOT EXISTS rounds (
 CREATE INDEX IF NOT EXISTS idx_player_samples_demo_tick ON player_samples(demo_id, tick);
 CREATE INDEX IF NOT EXISTS idx_player_samples_demo_entity ON player_samples(demo_id, entity_id, tick);
 CREATE INDEX IF NOT EXISTS idx_game_events_demo_name ON game_events(demo_id, name);
-CREATE INDEX IF NOT EXISTS idx_kills_demo_tick ON kills(demo_id, tick);
+CREATE INDEX IF NOT EXISTS idx_deaths_demo_tick ON deaths(demo_id, tick);
 CREATE INDEX IF NOT EXISTS idx_announcements_demo_tick ON announcements(demo_id, tick);
 CREATE INDEX IF NOT EXISTS idx_pov_demo_tick ON pov_samples(demo_id, tick);
 CREATE INDEX IF NOT EXISTS idx_inputs_demo_tick ON recorder_inputs(demo_id, tick);
@@ -606,21 +606,21 @@ impl Db {
         Ok(())
     }
 
-    pub fn insert_kills(
+    pub fn insert_deaths(
         &self,
         demo_id: i64,
-        kills: &[crate::extract::net::Kill],
+        deaths: &[crate::extract::net::Death],
         name_of: &dyn Fn(u32) -> Option<String>,
         steamid_of: SteamIdOf,
     ) -> Result<()> {
         let mut ins = self.conn.prepare(
-            "INSERT INTO kills (demo_id, tick, victim_steamid, victim_userid, victim_name,
-                                attacker_steamid, attacker_userid, attacker_name,
-                                assister_steamid, assists, weapon, headshot, suicide, explosive,
-                                ghoster)
+            "INSERT INTO deaths (demo_id, tick, victim_steamid, victim_userid, victim_name,
+                                 attacker_steamid, attacker_userid, attacker_name,
+                                 assister_steamid, assists, weapon, headshot, suicide, explosive,
+                                 ghoster)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
         )?;
-        for k in kills {
+        for k in deaths {
             ins.execute(rusqlite::params![
                 demo_id,
                 k.tick,
@@ -1022,16 +1022,16 @@ mod tests {
         db.insert_demo(&cut, "cut.dem", &header, None, Some(2)).unwrap();
         db.insert_demo(&other, "other.dem", &header, None, None).unwrap();
         let (cut, other) = (cut.id, other.id);
-        let mut kill = db
+        let mut death = db
             .conn
             .prepare(
-                "INSERT INTO kills (demo_id, tick, victim_userid, attacker_userid, assists,
-                                    weapon, headshot, suicide, explosive, ghoster)
+                "INSERT INTO deaths (demo_id, tick, victim_userid, attacker_userid, assists,
+                                     weapon, headshot, suicide, explosive, ghoster)
                  VALUES (?1, ?2, 2, 3, 0, 'srm', 0, 0, 0, 0)",
             )
             .unwrap();
         for (demo_id, tick) in [(cut, 99), (cut, 100), (other, 100)] {
-            kill.execute(rusqlite::params![demo_id, tick]).unwrap();
+            death.execute(rusqlite::params![demo_id, tick]).unwrap();
         }
         let mut player = db
             .conn
@@ -1046,15 +1046,15 @@ mod tests {
         }
 
         assert_eq!(db.cut_at(cut, 100).unwrap(), 2);
-        let kills: Vec<(i64, i64)> = db
+        let deaths: Vec<(i64, i64)> = db
             .conn
-            .prepare("SELECT demo_id, tick FROM kills ORDER BY tick, demo_id = ?1")
+            .prepare("SELECT demo_id, tick FROM deaths ORDER BY tick, demo_id = ?1")
             .unwrap()
             .query_map([other], |row| Ok((row.get(0)?, row.get(1)?)))
             .unwrap()
             .collect::<rusqlite::Result<_>>()
             .unwrap();
-        assert_eq!(kills, [(cut, 99), (other, 100)]);
+        assert_eq!(deaths, [(cut, 99), (other, 100)]);
         let players: i64 =
             db.conn.query_row("SELECT count(*) FROM players", [], |row| row.get(0)).unwrap();
         assert_eq!(players, 1);

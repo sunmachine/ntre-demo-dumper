@@ -77,7 +77,7 @@ skipped by its known wire size (formats ported from
 parsed **generically against the demo's own event definitions**, never a
 hardcoded schema. NT;RE's `player_death` has different fields than TF2's, so
 a parser with TF2-typed events silently misreads NT;RE demos. The
-`extract/net.rs` extractor builds the kill feed, roster, chat, and the
+`extract/net.rs` extractor builds the deaths, roster, chat, and the
 generic `game_events` table from these messages. The signon's
 `svc_ServerInfo` and `net_SetConVar` are decoded too, into `demos`'s server
 columns and the `server_cvars` table. The NT;RE build version itself is not

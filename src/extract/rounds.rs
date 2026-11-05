@@ -15,7 +15,7 @@ use std::collections::HashMap;
 
 use super::announcements::Announcement;
 use super::entities::{CarrierChange, EntityOutput, PlayerSample, ZoneChange};
-use super::net::{slot_holder, Kill, Player, RoundResult};
+use super::net::{slot_holder, Death, Player, RoundResult};
 
 pub struct Round {
     pub number: Option<i32>,
@@ -42,7 +42,7 @@ impl Round {
 
 /// Game state that the rules in this module read around each round end.
 /// Each field borrows what another pass produced, so a rule that needs more
-/// end-of-round state, such as alive players or kills, adds a field here and
+/// end-of-round state, such as alive players or deaths, adds a field here and
 /// leaves the `derive` call alone. An empty list means the demo did not
 /// carry that state, and the columns that need it stay NULL.
 pub struct Evidence<'a> {
@@ -55,30 +55,30 @@ pub struct Evidence<'a> {
     /// All-player state samples, for a losing team's alive state and a
     /// killed player's class at a round's end.
     pub player_samples: &'a [PlayerSample],
-    /// The kill feed, for a kill landing near a round's end.
-    pub kills: &'a [Kill],
+    /// The deaths, for a death landing near a round's end.
+    pub deaths: &'a [Death],
 }
 
 impl<'a> Evidence<'a> {
     /// Collect the evidence from the entity pass, which is `None` when that
-    /// pass failed, and the net pass's roster and kill feed.
+    /// pass failed, and the net pass's roster and deaths.
     pub fn new(
         entities: Option<&'a EntityOutput>,
         players: &'a HashMap<u32, Player>,
-        kills: &'a [Kill],
+        deaths: &'a [Death],
     ) -> Self {
         Evidence {
             carrier_changes: entities.map(|e| &e.carrier_changes[..]).unwrap_or_default(),
             zone_changes: entities.map(|e| &e.zone_changes[..]).unwrap_or_default(),
             players,
             player_samples: entities.map(|e| &e.samples[..]).unwrap_or_default(),
-            kills,
+            deaths,
         }
     }
 }
 
 /// Ticks either side of a round end within which the capture zones must
-/// switch off, a VIP's death must fall, or a kill must fall, for that fact
+/// switch off, a VIP's death must fall, or any death must fall, for that fact
 /// to count toward the round's outcome. The game applies all three in the
 /// think that ends the round, so the window only absorbs a change landing
 /// in a neighbouring packet.
@@ -185,9 +185,9 @@ fn win_reason_code(message: &str) -> Option<String> {
     CODES.iter().find(|(phrase, _)| message.contains(phrase)).map(|(_, code)| code.to_string())
 }
 
-/// Whether a kill in `kills` fell within `END_WINDOW` of `end_tick`.
-fn kill_near_end(end_tick: i32, kills: &[Kill]) -> bool {
-    kills.iter().any(|k| near_end(k.tick, end_tick))
+/// Whether a death in `deaths` fell within `END_WINDOW` of `end_tick`.
+fn death_near_end(end_tick: i32, deaths: &[Death]) -> bool {
+    deaths.iter().any(|k| near_end(k.tick, end_tick))
 }
 
 /// The class of the player who owns `entity_id`, by their latest sample at
@@ -200,12 +200,12 @@ fn class_at(entity_id: u32, tick: i32, samples: &[PlayerSample]) -> Option<i64> 
         .map(|s| s.class_num)
 }
 
-/// Whether a kill within the window around `end_tick` downed the VIP, NT;RE
+/// Whether a death within the window around `end_tick` was the VIP's, NT;RE
 /// class 3 (`neo_enums.h:21`), ending the round for the opposing team
 /// (upstream `neo_gamerules.cpp:1619`).
 fn vip_killed(end_tick: i32, evidence: &Evidence) -> bool {
     const VIP_CLASS: i64 = 3;
-    evidence.kills.iter().filter(|k| near_end(k.tick, end_tick)).any(|k| {
+    evidence.deaths.iter().filter(|k| near_end(k.tick, end_tick)).any(|k| {
         evidence
             .players
             .get(&k.victim_userid)
@@ -249,7 +249,7 @@ fn recovered_reason(winner: &str, end_tick: i32, evidence: &Evidence) -> Option<
         return Some("objective".to_string());
     }
     let losing_team = losing_team(winner)?;
-    if losers_eliminated(losing_team, end_tick, evidence) && kill_near_end(end_tick, evidence.kills) {
+    if losers_eliminated(losing_team, end_tick, evidence) && death_near_end(end_tick, evidence.deaths) {
         return Some("elimination".to_string());
     }
     None
@@ -436,8 +436,8 @@ mod tests {
         }
     }
 
-    fn kill(tick: i32, victim_userid: u32, attacker_userid: u32) -> Kill {
-        Kill {
+    fn death(tick: i32, victim_userid: u32, attacker_userid: u32) -> Death {
+        Death {
             tick,
             victim_userid,
             attacker_userid,
@@ -481,7 +481,7 @@ mod tests {
             zone_changes: &zones,
             players,
             player_samples: &[],
-            kills: &[],
+            deaths: &[],
         };
         let rounds = derive(&anns, &results, &evidence);
         assert_eq!(rounds.len(), 1);
@@ -612,7 +612,7 @@ mod tests {
             zone_changes: &zones,
             players: &HashMap::new(),
             player_samples: &[],
-            kills: &[],
+            deaths: &[],
         };
         let r = match_end_round("nsf", "Team NSF wins the match!", &evidence);
         assert_eq!((r.winner.as_deref(), r.reason.as_deref()), (Some("nsf"), Some("objective")));
@@ -621,40 +621,40 @@ mod tests {
     #[test]
     fn match_end_killed_vip_gives_objective() {
         let players = HashMap::from([player(11, 21, 0)]);
-        // The victim's class at the kill tick is 3, the VIP.
+        // The victim's class at the death tick is 3, the VIP.
         let samples = [sample(50, 21, 3, 3, false)];
-        let kills = [kill(101, 11, 5)];
+        let deaths = [death(101, 11, 5)];
         let evidence = Evidence {
             carrier_changes: &[],
             zone_changes: &[],
             players: &players,
             player_samples: &samples,
-            kills: &kills,
+            deaths: &deaths,
         };
         let r = match_end_round("jinrai", "Team Jinrai wins the match!", &evidence);
         assert_eq!((r.winner.as_deref(), r.reason.as_deref()), (Some("jinrai"), Some("objective")));
     }
 
     #[test]
-    fn match_end_losers_dead_with_kill_gives_elimination() {
+    fn match_end_losers_dead_with_death_gives_elimination() {
         // Winner Jinrai (team 2); the losing team, NSF (team 3), has two
         // players, both dead by their last sample at or before the end tick.
         let players = HashMap::from([player(1, 10, 0), player(2, 11, 0)]);
         let samples = [sample(50, 10, 3, 0, false), sample(50, 11, 3, 0, false)];
-        let kills = [kill(99, 1, 5)];
+        let deaths = [death(99, 1, 5)];
         let evidence = Evidence {
             carrier_changes: &[],
             zone_changes: &[],
             players: &players,
             player_samples: &samples,
-            kills: &kills,
+            deaths: &deaths,
         };
         let r = match_end_round("jinrai", "Team Jinrai wins the match!", &evidence);
         assert_eq!((r.winner.as_deref(), r.reason.as_deref()), (Some("jinrai"), Some("elimination")));
     }
 
     #[test]
-    fn match_end_losers_dead_without_kill_in_window_gives_null() {
+    fn match_end_losers_dead_without_death_in_window_gives_null() {
         let players = HashMap::from([player(1, 10, 0)]);
         let samples = [sample(50, 10, 3, 0, false)];
         let evidence = Evidence {
@@ -662,7 +662,7 @@ mod tests {
             zone_changes: &[],
             players: &players,
             player_samples: &samples,
-            kills: &[],
+            deaths: &[],
         };
         let r = match_end_round("jinrai", "Team Jinrai wins the match!", &evidence);
         assert_eq!((r.winner.as_deref(), r.reason.as_deref()), (Some("jinrai"), None));

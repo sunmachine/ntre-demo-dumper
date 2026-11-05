@@ -40,7 +40,7 @@ The crate/binary is named `ntre-demo-dumper`.
 - **Inferred hits:** who dealt each point of damage, reconstructed from
   health drops and enemy aim with a confidence per row, for demos where the
   game no longer networks damage attribution.
-- **Kill feed:** NT;RE's `player_death` game event: victim, attacker, assists,
+- **Deaths:** NT;RE's `player_death` game event: victim, attacker, assists,
   weapon, headshot/suicide/explosive/ghoster flags, with names resolved via the
   roster.
 - **Player roster:** Steam name, in-game name, userid, SteamID, bot flag,
@@ -66,7 +66,7 @@ tick, and payload length, so the walk is deterministic and byte-aligned.
 Three kinds of extraction run over it:
 
 - **Net-message parsing:** packet payloads are decoded as bit-packed net
-  messages, producing the kill feed, chat, roster, and game events.
+  messages, producing deaths, chat, roster, and game events.
 - **Entity decoding:** a separate whole-file pass decodes delta-compressed
   entity updates via the demo's own sendtables, producing `player_samples`.
 - **ASCII skim:** payloads are also scanned at all 8 bit alignments for
@@ -111,7 +111,7 @@ A demo already in the database is skipped, even under another name. That
 includes a demo parsed with `--last-round`, so parse the whole demo into
 another database file if you need it later.
 
-The tables cover metadata, announcements, rounds, scores, roster, kills,
+The tables cover metadata, announcements, rounds, scores, roster, deaths,
 pings, chat, game events, and per-tick samples. Some fill only for SourceTV
 recordings or only for POV recordings. See [SCHEMA.md](SCHEMA.md) for the
 table list, which tables depend on the recording type, column semantics,

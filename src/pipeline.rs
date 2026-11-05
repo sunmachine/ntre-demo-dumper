@@ -91,7 +91,7 @@ pub fn parse_one(path: &Path, db: &Db, opts: &Options) -> Result<Outcome> {
 
     // Register extractors here (see extract/mod.rs for the recipe). The
     // announcements and net passes are named because rounds need both, and
-    // the inferred-hits pass reads the net pass's kills and roster.
+    // the inferred-hits pass reads the net pass's deaths and roster.
     let mut announcements = announcements::Announcements::new(opts.patterns.clone(), opts.all_strings);
     let mut net = net::NetPass::default();
     let mut pov = pov::PovSampler::new(opts.pov_sample);
@@ -132,23 +132,23 @@ pub fn parse_one(path: &Path, db: &Db, opts: &Options) -> Result<Outcome> {
     if let Some(output) = &entity_output {
         net.apply_neo_names(&output.neo_name_changes);
     }
-    // The roster should hold every connection, so a kill naming a userid
-    // outside it points at a roster gap rather than a world kill.
-    let missing = net.kills_missing_from_roster();
+    // The roster should hold every connection, so a death naming a userid
+    // outside it points at a roster gap rather than a world death.
+    let missing = net.deaths_missing_from_roster();
     if missing > 0 {
         logs.push((
             LogLevel::Warning,
-            format!("{missing} kill(s) name a player missing from the roster; their names and Steam IDs are NULL"),
+            format!("{missing} death(s) name a player missing from the roster; their names and Steam IDs are NULL"),
         ));
     }
     let server_info = net.server_info.clone();
     let hits = entity_output
         .as_ref()
-        .map(|output| inferred_hits::infer(&output.samples, &net.kills, &net.players))
+        .map(|output| inferred_hits::infer(&output.samples, &net.deaths, &net.players))
         .unwrap_or_default();
     // Rounds take start markers from the announcements, ends from the net
     // pass, and the capturer from entity state, so they wait for all three.
-    let evidence = rounds::Evidence::new(entity_output.as_ref(), &net.players, &net.kills);
+    let evidence = rounds::Evidence::new(entity_output.as_ref(), &net.players, &net.deaths);
     let mut rounds = rounds::derive(announcements.found(&ctx), &net.round_results, &evidence);
     let cut = match opts.last_round {
         Some(last) => rounds::cut_after(&mut rounds, last)?,
