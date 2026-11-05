@@ -228,6 +228,19 @@ CREATE TABLE IF NOT EXISTS attacker_hits (
     accumulator REAL NOT NULL            -- fractional carry; 0 = respawn reset
 );
 
+-- Ghost possession from the game rules proxy's m_iGhosterPlayer: one row
+-- per stretch a player held the ghost, equipped or not.
+CREATE TABLE IF NOT EXISTS ghost_holds (
+    id INTEGER PRIMARY KEY,
+    demo_id INTEGER NOT NULL REFERENCES demos(id),
+    tick INTEGER NOT NULL,         -- when the player took the ghost
+    end_tick INTEGER,              -- first tick they no longer held it, at most the round end
+    round_number INTEGER,          -- joins rounds.round_number; NULL before the first round
+    entity_id INTEGER NOT NULL,    -- the holder's slot; joins players.entity_id
+    steamid TEXT,                  -- joins players.steamid
+    userid INTEGER                 -- connection id; joins players.userid
+);
+
 -- In-game location pings (player_ping game events). POV demos only.
 CREATE TABLE IF NOT EXISTS player_pings (
     id INTEGER PRIMARY KEY,
@@ -890,6 +903,31 @@ impl Db {
         )?;
         for s in samples {
             ins.execute(rusqlite::params![demo_id, s.tick, s.entity_id, s.x, s.y, s.z])?;
+        }
+        Ok(())
+    }
+
+    pub fn insert_ghost_holds(
+        &self,
+        demo_id: i64,
+        holds: &[crate::extract::ghost_holds::GhostHold],
+        owners: &SlotOwners,
+    ) -> Result<()> {
+        let mut ins = self.conn.prepare(
+            "INSERT INTO ghost_holds (demo_id, tick, end_tick, round_number, entity_id, steamid,
+                                      userid)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        )?;
+        for h in holds {
+            ins.execute(rusqlite::params![
+                demo_id,
+                h.tick,
+                h.end_tick,
+                h.round_number,
+                h.entity_id,
+                owners.steamid_at(h.entity_id, i64::from(h.tick)),
+                h.userid,
+            ])?;
         }
         Ok(())
     }

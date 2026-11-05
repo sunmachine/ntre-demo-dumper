@@ -85,8 +85,8 @@ pub struct ResourceSample {
 
 /// One change of the ghost carrier, from the game rules proxy's
 /// `m_iGhosterPlayer`. The game recomputes it every think from the ghost's
-/// owner (upstream `neo_gamerules.cpp:1482-1496`), so it names the carrier
-/// even while they hold another weapon.
+/// owner (upstream at `bea96408`, `neo_gamerules.cpp:1414-1428`), so it
+/// names the carrier even while they hold another weapon.
 pub struct CarrierChange {
     pub tick: u32,
     /// The carrier's entity slot, or 0 once no one carries the ghost.

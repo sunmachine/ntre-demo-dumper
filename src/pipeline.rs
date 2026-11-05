@@ -14,7 +14,7 @@ use crate::demo::frames::FrameIter;
 use crate::demo::header::{DemoHeader, HEADER_SIZE};
 use crate::demo::identity::DemoIdentity;
 use crate::extract::{
-    alive, announcements, console, entities, inferred_hits, inputs, net, pov, rounds, DemoContext,
+    alive, announcements, console, entities, ghost_holds, inferred_hits, inputs, net, pov, rounds, DemoContext,
     FrameExtractor,
 };
 use crate::output::sqlite::Db;
@@ -160,6 +160,10 @@ pub fn parse_one(path: &Path, db: &Db, opts: &Options) -> Result<Outcome> {
         .as_ref()
         .map(|output| alive::counts(&output.resource_samples, &net.deaths, &net.players, &rounds))
         .unwrap_or_default();
+    let holds = entity_output
+        .as_ref()
+        .map(|output| ghost_holds::holds(&output.carrier_changes, &net.players, &rounds))
+        .unwrap_or_default();
     // Tables that name a player by entity slot also store the Steam ID of
     // whoever held the slot at the row's tick.
     let owners = net::SlotOwners::new(&net.players);
@@ -193,12 +197,14 @@ pub fn parse_one(path: &Path, db: &Db, opts: &Options) -> Result<Outcome> {
         db.insert_attacker_hits(demo_id, &output.damage_samples, &owners)?;
         db.insert_inferred_hits(demo_id, &hits, &owners)?;
         db.insert_alive_counts(demo_id, &alive_counts)?;
+        db.insert_ghost_holds(demo_id, &holds, &owners)?;
         summary.push(("player samples".into(), output.samples.len()));
         summary.push(("ghost samples".into(), output.ghost_samples.len()));
         summary.push(("resource samples".into(), output.resource_samples.len()));
         summary.push(("attacker hits".into(), output.damage_samples.len()));
         summary.push(("inferred hits".into(), hits.len()));
         summary.push(("alive counts".into(), alive_counts.len()));
+        summary.push(("ghost holds".into(), holds.len()));
         if output.player_classes.is_empty() {
             logs.push((
                 LogLevel::Warning,
