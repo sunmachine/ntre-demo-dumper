@@ -28,6 +28,8 @@ pub struct AliveCount {
     pub tick: u32,
     /// The round the tick falls in, as `rounds::place` finds it.
     pub round_number: Option<i32>,
+    /// That round's position in the demo, as `rounds.round_index`.
+    pub round_index: Option<u32>,
     pub team: i64,
     pub alive: usize,
 }
@@ -75,8 +77,10 @@ pub fn counts(
         for team in TEAMS {
             let alive = state.values().filter(|&&(t, a)| t == team && a).count();
             if written.insert(team, alive) != Some(alive) {
-                let round_number = place(rounds, tick as i32).and_then(|p| p.number);
-                out.push(AliveCount { tick, round_number, team, alive });
+                let round = place(rounds, tick as i32);
+                let round_number = round.as_ref().and_then(|p| p.number);
+                let round_index = round.map(|p| p.index);
+                out.push(AliveCount { tick, round_number, round_index, team, alive });
             }
         }
     }
@@ -185,6 +189,7 @@ mod tests {
             explosive: false,
             ghoster: false,
             round_number: None,
+            round_index: None,
             post_round: false,
             victim_team: None,
             attacker_team: None,
@@ -243,6 +248,23 @@ mod tests {
         assert_eq!(
             rows(&counts(&resource, &[], &players, &[])),
             [(14, None, 2, 1), (14, None, 3, 1), (120, None, 2, 0), (130, None, 2, 1), (130, None, 3, 0)]
+        );
+    }
+
+    #[test]
+    fn a_reused_slot_counts_for_its_new_player() {
+        let players = HashMap::from([player(1), player(2)]);
+        let resource = [
+            sample(14, 1, 2, true),
+            sample(14, 2, 3, true),
+            // Player 1 leaves; a joiner takes slot 1 on NSF, dead until spawned.
+            ResourceSample { connected: false, ..sample(120, 1, 2, true) },
+            sample(160, 1, 3, false),
+            sample(400, 1, 3, true),
+        ];
+        assert_eq!(
+            rows(&counts(&resource, &[], &players, &[])),
+            [(14, None, 2, 1), (14, None, 3, 1), (120, None, 2, 0), (400, None, 3, 2)]
         );
     }
 

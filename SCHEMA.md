@@ -229,7 +229,7 @@ times, PVS included.
 | `steamid` | the player holding the slot at `tick`; joins `players.steamid` |
 | `team` | `m_iTeam`, coded as in `player_samples.team` |
 | `alive` | `m_bAlive`: 1 if the player was alive at the last resource refresh |
-| `connected` | `m_bConnected`: 1 while a player holds the slot. A disconnect clears only this, so a slot keeps its last `team` and `alive` after its player leaves (upstream at `bea96408`, `src/game/server/player_resource.cpp:250`) |
+| `connected` | `m_bConnected`: 1 while a player holds the slot. A disconnect clears this, the account id and the userid but not `team` or `alive`, so a slot keeps its last `team` and `alive` after its player leaves (upstream at `bea96408`, `src/game/server/player_resource.cpp:250-255`) |
 | `xp` | NT;RE XP, the number the scoreboard ranks by |
 | `score` | engine score field |
 | `deaths` | death count |
@@ -275,6 +275,7 @@ alive.
 |---|---|
 | `tick` | when the count changed |
 | `round_number` | the round the tick falls in, as in `deaths.round_number`; NULL before the first round |
+| `round_index` | that round's `rounds.round_index`; join on it with `demo_id`. NULL before the first round |
 | `team` | 2 Jinrai, 3 NSF |
 | `alive` | players on the team alive from this tick on |
 
@@ -342,7 +343,8 @@ rows have no killer, and `ghoster` describes the victim too.
 | column | meaning |
 |---|---|
 | `tick` | when the player died |
-| `round_number` | the round the death fell in, as in `rounds.round_number`; join on it with `demo_id`. NULL before the first round began, as in warmup |
+| `round_number` | the number of the round the death fell in, as in `rounds.round_number`. NULL before the first round began, as in warmup |
+| `round_index` | that round's `rounds.round_index`; join on it with `demo_id`, because `round_number` repeats. NULL when `round_number` is |
 | `post_round` | 1 when the death fell after its round ended and before the next round began, while the result is on screen |
 | `victim_steamid`, `attacker_steamid`, `assister_steamid` | the players' Steam IDs, looked up in the roster at parse time; join `players.steamid`. NULL for the attacker of a world death, for the assister when nobody assisted, and for a player missing from the roster |
 | `victim_userid`, `attacker_userid` | connection ids from the event's `userid` and `attacker` fields; join `players.userid`; attacker 0 = world/environment |
@@ -393,8 +395,9 @@ WHERE r.win_reason = 'elimination'
 ```
 
 A round with no recorded start, because the recording began during it,
-takes every death before its end. A round aborted by an admin pause runs
-until its restart, and both carry the same `round_number`.
+takes every death before its end. A round aborted by an admin pause or a
+match restart runs until the next start, and the round that follows can
+carry the same `round_number`, so `round_index` tells them apart.
 
 Apart from world deaths and deaths nobody assisted, every userid in a row
 should have a roster row. The dumper warns at parse time when a death names
@@ -458,11 +461,16 @@ and the property keeps its last value until the next round resets it
 (`:3516-3522`). A hold still open at its round's end therefore ends at the
 round's end tick, and a pickup after the round ended has no row.
 
+A hold covers `tick <= t AND t <= end_tick`. When the ghost passes straight
+from one player to another, the next hold begins on the previous hold's
+`end_tick`.
+
 | column | meaning |
 |---|---|
 | `tick` | when the player took the ghost |
-| `end_tick` | the first tick they no longer held it, or their round's end tick if that came first; NULL when the recording cut off the round |
+| `end_tick` | the last tick of the hold, inclusive: the tick the property moved off the player, or their round's end tick if that came first. A carrier's death lands on this tick, and the game's `deaths.ghoster` still names them there. NULL when the recording cut off the round |
 | `round_number` | the round the hold began in, as in `deaths.round_number` |
+| `round_index` | that round's `rounds.round_index`; join on it with `demo_id` |
 | `entity_id` | the holder's slot; joins `players.entity_id` |
 | `steamid` | the holder; joins `players.steamid` |
 | `userid` | the holder's connection id; joins `players.userid` and tells bots apart |
@@ -625,7 +633,8 @@ alive. Otherwise it is NULL.
 
 | column | meaning |
 |---|---|
-| `round_number` | as announced by the game; NULL if the first start marker was missed. A round restarted after an admin pause repeats its number |
+| `round_number` | as announced by the game; NULL if the first start marker was missed. A round restarted after an admin pause repeats its number, and a match restart starts the count again, so one number can name several rounds of a demo |
+| `round_index` | the round's position in the demo, counting from 1 in tick order; unique within a demo, so other tables join on it |
 | `start_tick`, `end_tick` | NULL when the demo started mid-round, or the round never ended (cut off, or aborted by a pause) |
 | `winner` | `jinrai`, `nsf` or `tie`, as in `round_results.team`; NULL for a round that never ended or whose winner is unknown |
 | `win_reason` | how the round was won, below; NULL when unknown. The full text is in `round_results.message` |

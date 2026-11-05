@@ -237,6 +237,7 @@ mod tests {
             explosive: false,
             ghoster: false,
             round_number: None,
+            round_index: None,
             post_round: false,
             victim_team: None,
             attacker_team: None,
