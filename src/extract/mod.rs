@@ -10,6 +10,7 @@
 //! [`FrameExtractor`], give it a table + `insert_*` method in
 //! `crate::output::sqlite`, and register it in `crate::pipeline::parse_one`.
 
+pub mod alive;
 pub mod announcements;
 pub mod console;
 pub mod entities;

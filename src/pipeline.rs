@@ -14,7 +14,7 @@ use crate::demo::frames::FrameIter;
 use crate::demo::header::{DemoHeader, HEADER_SIZE};
 use crate::demo::identity::DemoIdentity;
 use crate::extract::{
-    announcements, console, entities, inferred_hits, inputs, net, pov, rounds, DemoContext,
+    alive, announcements, console, entities, inferred_hits, inputs, net, pov, rounds, DemoContext,
     FrameExtractor,
 };
 use crate::output::sqlite::Db;
@@ -156,6 +156,10 @@ pub fn parse_one(path: &Path, db: &Db, opts: &Options) -> Result<Outcome> {
         None => None,
     };
     net.place_deaths(&rounds);
+    let alive_counts = entity_output
+        .as_ref()
+        .map(|output| alive::counts(&output.resource_samples, &net.deaths, &net.players, &rounds))
+        .unwrap_or_default();
     let mut extractors: Vec<&mut dyn FrameExtractor> =
         vec![&mut announcements, &mut pov, &mut console, &mut inputs, &mut net];
 
@@ -180,11 +184,13 @@ pub fn parse_one(path: &Path, db: &Db, opts: &Options) -> Result<Outcome> {
         db.insert_player_resource(demo_id, &output.resource_samples)?;
         db.insert_attacker_hits(demo_id, &output.damage_samples)?;
         db.insert_inferred_hits(demo_id, &hits)?;
+        db.insert_alive_counts(demo_id, &alive_counts)?;
         summary.push(("player samples".into(), output.samples.len()));
         summary.push(("ghost samples".into(), output.ghost_samples.len()));
         summary.push(("resource samples".into(), output.resource_samples.len()));
         summary.push(("attacker hits".into(), output.damage_samples.len()));
         summary.push(("inferred hits".into(), hits.len()));
+        summary.push(("alive counts".into(), alive_counts.len()));
         if output.player_classes.is_empty() {
             logs.push((
                 LogLevel::Warning,
