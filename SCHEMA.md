@@ -69,6 +69,13 @@ so if you add a column, document it.
   into the kept rounds. `demos.last_round` records the N. A demo parsed
   this way counts as parsed, so to get the whole demo later, parse it into
   another database file.
+- **Omitted tables.** `--omit` takes a comma-separated list of tables to
+  leave empty, and `--omit-samples` leaves every table named `*_samples`
+  empty. Every table is still created, so a query against an omitted one
+  returns no rows rather than failing. The other tables are unchanged,
+  because the dumper still decodes everything and only skips the writes.
+  `demos.omitted` lists what was left out for each demo. Like a cut demo,
+  a demo parsed this way counts as parsed.
 - **Schema version.** A database records the schema version that wrote it,
   and the dumper refuses to add demos to a database written by another
   version, so parse into a new file after upgrading.
@@ -139,6 +146,7 @@ One row per parsed demo file; every other table hangs off `id`.
 | `recorder_steamid` | the recording player's Steam ID at the start of the recording; joins `players.steamid`. NULL for a SourceTV recording, whose recorder is the SourceTV client, which the roster leaves out |
 | `parser_version` | the dumper version that wrote this demo's rows |
 | `last_round` | the `--last-round` this demo was parsed with, so its rows end where the next round began; NULL when the whole demo was parsed |
+| `omitted` | the tables left empty for this demo by `--omit` or `--omit-samples`, comma-separated in name order; NULL when every table was written |
 
 ### `players`
 
@@ -232,7 +240,7 @@ times, PVS included.
 | `tick` | sample time |
 | `entity_id` | player slot; joins `players.entity_id` |
 | `steamid` | the player holding the slot at `tick`; joins `players.steamid` |
-| `team` | `m_iTeam`, coded as in `player_samples.team` |
+| `team` | `m_iTeam`, numbered as under Teams in Shared conventions |
 | `alive` | `m_bAlive`: 1 if the player was alive at the last resource refresh |
 | `connected` | `m_bConnected`: 1 while a player holds the slot. A disconnect clears this, the account id and the userid but not `team` or `alive`, so a slot keeps its last `team` and `alive` after its player leaves (upstream at `bea96408`, `src/game/server/player_resource.cpp:250-255`) |
 | `xp` | NT;RE XP, the number the scoreboard ranks by |
@@ -354,7 +362,7 @@ rows have no killer, and `ghoster` describes the victim too.
 | `victim_steamid`, `attacker_steamid`, `assister_steamid` | the players' Steam IDs, looked up in the roster at parse time; join `players.steamid`. NULL for the attacker of a world death, for the assister when nobody assisted, and for a player missing from the roster |
 | `victim_userid`, `attacker_userid` | connection ids from the event's `userid` and `attacker` fields; join `players.userid`; attacker 0 = world/environment |
 | `victim_name`, `attacker_name` | resolved at parse time; NULL if unknown |
-| `victim_team`, `attacker_team`, `assister_team` | each player's team at the death, coded as in `player_samples.team`, from the latest `player_resource.team` of their slot at or before `tick`. NULL for the attacker of a world death, for the assister when nobody assisted, for a player missing from the roster, and when the entity pass failed |
+| `victim_team`, `attacker_team`, `assister_team` | each player's team at the death, numbered as under Teams in Shared conventions, from the latest `player_resource.team` of their slot at or before `tick`. NULL for the attacker of a world death, for the assister when nobody assisted, for a player missing from the roster, and when the entity pass failed |
 | `assists` | userid of the assisting player, or 0 for none; joins `players.userid` (NT;RE defines the event field as "user ID who assists") |
 | `weapon` | weapon's entity name without `weapon_`, e.g. `srm`; see Weapon reference below. A grenade or detpack kill's inflictor is mapped to the weapon that made it |
 | `headshot`, `suicide`, `explosive` | kill flags |
@@ -456,7 +464,7 @@ are present, not just the recorder's.
 | `tick` | when the ping was placed |
 | `steamid` | pinging player; joins `players.steamid`. NULL if missing from the roster |
 | `userid` | pinging player's connection id, from the event; joins `players.userid` |
-| `team` | pinging player's team, coded as in `player_samples.team` |
+| `team` | pinging player's team, numbered as under Teams in Shared conventions |
 | `x`, `y`, `z` | pinged world position |
 | `ghoster_ping` | 1 when the pinging player carried the ghost or was the VIP |
 
@@ -515,7 +523,7 @@ compass. Players never send callouts, so a game without bots has no rows.
 | `tick` | when the callout fired |
 | `steamid` | ghost carrier's Steam ID, which is `BOT` because only bots call out |
 | `userid` | ghost carrier, from the event; joins `players.userid` and is the column that identifies the bot |
-| `team` | carrier's team, coded as in `player_samples.team` |
+| `team` | carrier's team, numbered as under Teams in Shared conventions |
 | `target_entity_id` | spotted enemy; joins `players.entity_id` |
 | `target_steamid` | spotted enemy's Steam ID; joins `players.steamid` |
 | `x`, `y`, `z` | spotted enemy's world position |
@@ -537,7 +545,7 @@ Team joins and switches, from `player_team` game events.
 | `tick` | when the change happened |
 | `steamid` | the player; joins `players.steamid`. NULL if missing from the roster |
 | `userid` | connection id, from the event; joins `players.userid` |
-| `team`, `old_team` | new and previous team, coded as in `player_samples.team` |
+| `team`, `old_team` | new and previous team, numbered as under Teams in Shared conventions |
 | `disconnect` | 1 when the change is a player disconnecting |
 
 ### `rank_changes`

@@ -235,9 +235,15 @@ pub fn parse_one(path: &Path, db: &Db, opts: &Options) -> Result<Outcome> {
     println!();
     print_logs(&logs);
     println!("  demo #{demo_id} extracted");
-    let width = summary.iter().map(|(l, _)| l.len()).max().unwrap_or(0).max("parsed in".len());
+    let width = summary.iter().map(|(l, _)| l.len()).max().unwrap_or(0).max("not written".len());
     for (label, count) in &summary {
         println!("    {label:<width$}  {count}");
+    }
+    // The counts above are what the passes extracted; an omitted table's
+    // rows were counted but not written.
+    let omitted = db.omitted().collect::<Vec<_>>();
+    if !omitted.is_empty() {
+        println!("    {:<width$}  {}", "not written", omitted.join(", "));
     }
     println!(
         "    {:<width$}  {:.2}s ({} thread{})",

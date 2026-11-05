@@ -15,6 +15,7 @@
 
 use anyhow::{anyhow, Result};
 use rusqlite::{Connection, OptionalExtension};
+use std::collections::BTreeSet;
 use std::path::Path;
 
 use crate::demo::frames::ViewInfo;
@@ -36,6 +37,8 @@ const SCHEMA_VERSION: i32 = 4;
 
 pub struct Db {
     conn: Connection,
+    /// Tables left empty for every demo this run parses, set by `omit`.
+    omitted: BTreeSet<String>,
 }
 
 const SCHEMA: &str = r#"
@@ -67,7 +70,8 @@ CREATE TABLE IF NOT EXISTS demos (
     recorder_entity_id INTEGER,    -- recording client's entity slot
     recorder_steamid TEXT,         -- the recording player; NULL for SourceTV
     parser_version TEXT NOT NULL,  -- dumper version that wrote this demo's rows
-    last_round INTEGER             -- --last-round the demo was parsed with; NULL = the whole demo
+    last_round INTEGER,            -- --last-round the demo was parsed with; NULL = the whole demo
+    omitted TEXT                   -- tables left empty for this demo, comma-separated; NULL = none
 );
 
 -- Player roster: from the string-table dump at recording start plus
@@ -197,7 +201,7 @@ CREATE TABLE IF NOT EXISTS deaths (
     victim_steamid TEXT,              -- joins players.steamid; NULL if not in the roster
     victim_userid INTEGER NOT NULL,   -- connection id; joins players.userid
     victim_name TEXT,                 -- resolved at parse time; NULL if unknown
-    victim_team INTEGER,              -- coded as player_samples.team; NULL if unknown
+    victim_team INTEGER,              -- 0 none, 1 spectator, 2 Jinrai, 3 NSF; NULL if unknown
     attacker_steamid TEXT,            -- NULL for a world death
     attacker_userid INTEGER NOT NULL, -- 0 = world / environment
     attacker_name TEXT,
@@ -443,7 +447,44 @@ impl Db {
 
         conn.execute_batch(SCHEMA)?;
         conn.execute_batch(&format!("PRAGMA user_version = {SCHEMA_VERSION}"))?;
-        Ok(Self { conn })
+        Ok(Self { conn, omitted: BTreeSet::new() })
+    }
+
+    /// Every table the schema creates, by name.
+    pub fn table_names(&self) -> Result<Vec<String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")?;
+        let names = stmt.query_map([], |row| row.get(0))?.collect::<rusqlite::Result<_>>()?;
+        Ok(names)
+    }
+
+    /// Leave these tables empty for every demo parsed from here on. The
+    /// tables are still created, so a query against one returns no rows
+    /// rather than failing. `demos` cannot be omitted, because the skip of
+    /// an already parsed demo and every join depend on it.
+    pub fn omit(&mut self, tables: impl IntoIterator<Item = String>) -> Result<()> {
+        let known = self.table_names()?;
+        for table in tables {
+            if table == "demos" {
+                return Err(anyhow!("the demos table cannot be omitted"));
+            }
+            if !known.contains(&table) {
+                let choices: Vec<_> = known.iter().filter(|t| *t != "demos").map(String::as_str).collect();
+                return Err(anyhow!("no table named {table:?}; tables that can be omitted are {}", choices.join(", ")));
+            }
+            self.omitted.insert(table);
+        }
+        Ok(())
+    }
+
+    /// The tables `omit` left out, in name order.
+    pub fn omitted(&self) -> impl Iterator<Item = &str> {
+        self.omitted.iter().map(String::as_str)
+    }
+
+    fn omits(&self, table: &str) -> bool {
+        self.omitted.contains(table)
     }
 
     pub fn begin(&self) -> Result<()> {
@@ -495,9 +536,9 @@ impl Db {
                                 playback_ticks, playback_frames, tickrate, sourcetv,
                                 dedicated, server_os, host_name, max_clients,
                                 tick_interval, map_md5, recorder_entity_id, recorder_steamid,
-                                parser_version, last_round)
+                                parser_version, last_round, omitted)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
-                     ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
+                     ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)",
             rusqlite::params![
                 identity.id,
                 identity.sha256,
@@ -523,6 +564,7 @@ impl Db {
                 recorder_steamid,
                 env!("CARGO_PKG_VERSION"),
                 last_round,
+                (!self.omitted.is_empty()).then(|| self.omitted().collect::<Vec<_>>().join(",")),
             ],
         )?;
         Ok(())
@@ -563,6 +605,9 @@ impl Db {
         announcements: &[Announcement],
         tickrate: f64,
     ) -> Result<()> {
+        if self.omits("announcements") {
+            return Ok(());
+        }
         let mut ins = self.conn.prepare(
             "INSERT INTO announcements (demo_id, tick, seconds, text) VALUES (?1, ?2, ?3, ?4)",
         )?;
@@ -573,6 +618,9 @@ impl Db {
     }
 
     pub fn insert_rounds(&self, demo_id: i64, rounds: &[Round], steamid_of: SteamIdOf) -> Result<()> {
+        if self.omits("rounds") {
+            return Ok(());
+        }
         let mut ins = self.conn.prepare(
             "INSERT INTO rounds (demo_id, round_number, round_index, start_tick, end_tick, winner,
                                  win_reason, capturer_steamid, capturer_userid,
@@ -599,6 +647,9 @@ impl Db {
     }
 
     pub fn insert_pov_samples(&self, demo_id: i64, samples: &[(i32, ViewInfo)]) -> Result<()> {
+        if self.omits("pov_samples") {
+            return Ok(());
+        }
         let mut ins = self.conn.prepare(
             "INSERT INTO pov_samples (demo_id, tick, x, y, z, pitch, yaw, roll)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
@@ -617,6 +668,9 @@ impl Db {
         demo_id: i64,
         cmds: &[(i32, crate::demo::usercmd::UserCmd)],
     ) -> Result<()> {
+        if self.omits("recorder_inputs") {
+            return Ok(());
+        }
         let mut ins = self.conn.prepare(
             "INSERT INTO recorder_inputs (demo_id, tick, buttons, impulse, weaponselect,
                                           pitch, yaw, roll, forwardmove, sidemove, upmove,
@@ -644,6 +698,9 @@ impl Db {
     }
 
     pub fn insert_players(&self, demo_id: i64, players: &[&crate::extract::net::Player]) -> Result<()> {
+        if self.omits("players") {
+            return Ok(());
+        }
         let mut ins = self.conn.prepare(
             "INSERT INTO players (demo_id, entity_id, userid, name, neo_name, steamid, is_bot,
                                   first_seen_tick)
@@ -671,6 +728,9 @@ impl Db {
         name_of: &dyn Fn(u32) -> Option<String>,
         steamid_of: SteamIdOf,
     ) -> Result<()> {
+        if self.omits("deaths") {
+            return Ok(());
+        }
         let mut ins = self.conn.prepare(
             "INSERT INTO deaths (demo_id, tick, round_number, round_index, post_round,
                                  victim_steamid, victim_userid, victim_name, victim_team,
@@ -715,6 +775,9 @@ impl Db {
         pings: &[crate::extract::net::Ping],
         steamid_of: SteamIdOf,
     ) -> Result<()> {
+        if self.omits("player_pings") {
+            return Ok(());
+        }
         let mut ins = self.conn.prepare(
             "INSERT INTO player_pings (demo_id, tick, steamid, userid, team, x, y, z, ghoster_ping)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
@@ -734,6 +797,9 @@ impl Db {
         steamid_of: SteamIdOf,
         owners: &SlotOwners,
     ) -> Result<()> {
+        if self.omits("ghost_callouts") {
+            return Ok(());
+        }
         let mut ins = self.conn.prepare(
             "INSERT INTO ghost_callouts (demo_id, tick, steamid, userid, team, target_entity_id,
                                          target_steamid, x, y, z)
@@ -761,6 +827,9 @@ impl Db {
         demo_id: i64,
         scores: &[crate::extract::net::TeamScore],
     ) -> Result<()> {
+        if self.omits("team_scores") {
+            return Ok(());
+        }
         let mut ins = self.conn.prepare(
             "INSERT INTO team_scores (demo_id, tick, team, score) VALUES (?1, ?2, ?3, ?4)",
         )?;
@@ -776,6 +845,9 @@ impl Db {
         changes: &[crate::extract::net::TeamChange],
         steamid_of: SteamIdOf,
     ) -> Result<()> {
+        if self.omits("team_changes") {
+            return Ok(());
+        }
         let mut ins = self.conn.prepare(
             "INSERT INTO team_changes (demo_id, tick, steamid, userid, team, old_team, disconnect)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
@@ -794,6 +866,9 @@ impl Db {
         changes: &[crate::extract::net::RankChange],
         steamid_of: SteamIdOf,
     ) -> Result<()> {
+        if self.omits("rank_changes") {
+            return Ok(());
+        }
         let mut ins = self.conn.prepare(
             "INSERT INTO rank_changes (demo_id, tick, steamid, userid, old_rank, new_rank)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -811,6 +886,9 @@ impl Db {
         demo_id: i64,
         cvars: &[crate::extract::net::ServerCvar],
     ) -> Result<()> {
+        if self.omits("server_cvars") {
+            return Ok(());
+        }
         let mut ins = self.conn.prepare(
             "INSERT INTO server_cvars (demo_id, tick, name, value) VALUES (?1, ?2, ?3, ?4)",
         )?;
@@ -825,6 +903,9 @@ impl Db {
         demo_id: i64,
         results: &[crate::extract::net::RoundResult],
     ) -> Result<()> {
+        if self.omits("round_results") {
+            return Ok(());
+        }
         let mut ins = self.conn.prepare(
             "INSERT INTO round_results (demo_id, tick, team, message) VALUES (?1, ?2, ?3, ?4)",
         )?;
@@ -839,6 +920,9 @@ impl Db {
         demo_id: i64,
         starts: &[crate::extract::net::RoundStart],
     ) -> Result<()> {
+        if self.omits("round_starts") {
+            return Ok(());
+        }
         let mut ins = self.conn.prepare(
             "INSERT INTO round_starts (demo_id, tick, objective, timelimit, fraglimit)
              VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -855,6 +939,9 @@ impl Db {
         chat: &[crate::extract::net::ChatLine],
         owners: &SlotOwners,
     ) -> Result<()> {
+        if self.omits("chat") {
+            return Ok(());
+        }
         let mut ins = self.conn.prepare(
             "INSERT INTO chat (demo_id, tick, client_entity, steamid, from_name, text, team_chat)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
@@ -874,6 +961,9 @@ impl Db {
     }
 
     pub fn insert_game_events(&self, demo_id: i64, events: &[(i32, String, String)]) -> Result<()> {
+        if self.omits("game_events") {
+            return Ok(());
+        }
         let mut ins = self.conn.prepare(
             "INSERT INTO game_events (demo_id, tick, name, fields) VALUES (?1, ?2, ?3, ?4)",
         )?;
@@ -889,6 +979,9 @@ impl Db {
         samples: &[crate::extract::entities::PlayerSample],
         owners: &SlotOwners,
     ) -> Result<()> {
+        if self.omits("player_samples") {
+            return Ok(());
+        }
         let mut ins = self.conn.prepare(
             "INSERT INTO player_samples (demo_id, tick, entity_id, steamid, x, y, z, eye_pitch,
                                          eye_yaw, vx, vy, vz, weapon, health, team, class, camo,
@@ -912,6 +1005,9 @@ impl Db {
         demo_id: i64,
         samples: &[crate::extract::entities::GhostSample],
     ) -> Result<()> {
+        if self.omits("ghost_samples") {
+            return Ok(());
+        }
         let mut ins = self.conn.prepare(
             "INSERT INTO ghost_samples (demo_id, tick, entity_id, x, y, z)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -928,6 +1024,9 @@ impl Db {
         holds: &[crate::extract::ghost_holds::GhostHold],
         owners: &SlotOwners,
     ) -> Result<()> {
+        if self.omits("ghost_holds") {
+            return Ok(());
+        }
         let mut ins = self.conn.prepare(
             "INSERT INTO ghost_holds (demo_id, tick, end_tick, round_number, round_index, entity_id,
                                       steamid, userid)
@@ -953,6 +1052,9 @@ impl Db {
         demo_id: i64,
         counts: &[crate::extract::alive::AliveCount],
     ) -> Result<()> {
+        if self.omits("alive_counts") {
+            return Ok(());
+        }
         let mut ins = self.conn.prepare(
             "INSERT INTO alive_counts (demo_id, tick, round_number, round_index, team, alive)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -976,6 +1078,9 @@ impl Db {
         samples: &[crate::extract::entities::ResourceSample],
         owners: &SlotOwners,
     ) -> Result<()> {
+        if self.omits("player_resource") {
+            return Ok(());
+        }
         let mut ins = self.conn.prepare(
             "INSERT INTO player_resource (demo_id, tick, entity_id, steamid, team, alive,
                                           connected, xp, score, deaths, ping)
@@ -1005,6 +1110,9 @@ impl Db {
         hits: &[crate::extract::inferred_hits::InferredHit],
         owners: &SlotOwners,
     ) -> Result<()> {
+        if self.omits("inferred_hits") {
+            return Ok(());
+        }
         let mut ins = self.conn.prepare(
             "INSERT INTO inferred_hits (demo_id, tick, victim_entity_id, victim_steamid,
                                         attacker_entity_id, attacker_steamid, damage, aim_error,
@@ -1035,6 +1143,9 @@ impl Db {
         samples: &[crate::extract::entities::DamageSample],
         owners: &SlotOwners,
     ) -> Result<()> {
+        if self.omits("attacker_hits") {
+            return Ok(());
+        }
         let mut ins = self.conn.prepare(
             "INSERT INTO attacker_hits (demo_id, tick, victim_entity_id, victim_steamid,
                                         attacker_entity_id, attacker_steamid, accumulator)
@@ -1056,6 +1167,9 @@ impl Db {
     }
 
     pub fn insert_console_cmds(&self, demo_id: i64, cmds: &[(i32, String)]) -> Result<()> {
+        if self.omits("console_cmds") {
+            return Ok(());
+        }
         let mut ins = self
             .conn
             .prepare("INSERT INTO console_cmds (demo_id, tick, cmd) VALUES (?1, ?2, ?3)")?;
@@ -1155,6 +1269,39 @@ mod tests {
             .collect::<rusqlite::Result<_>>()
             .unwrap();
         assert_eq!(without_tick, ["demos", "players", "rounds"]);
+    }
+
+    #[test]
+    fn omitted_tables_stay_empty_and_the_demo_records_them() {
+        let mut db = Db::open(Path::new(":memory:")).unwrap();
+        assert!(db.omit(["demos".to_string()]).is_err());
+        assert!(db.omit(["no_such_table".to_string()]).is_err());
+        db.omit(["console_cmds".to_string(), "chat".to_string()]).unwrap();
+        let header = DemoHeader {
+            demo_protocol: 3,
+            network_protocol: 24,
+            server_name: String::new(),
+            client_name: String::new(),
+            map_name: String::new(),
+            game_directory: String::new(),
+            playback_seconds: 0.0,
+            playback_ticks: 0,
+            playback_frames: 0,
+            signon_length: 0,
+        };
+        let demo = DemoIdentity::of(b"omit");
+        db.insert_demo(&demo, "omit.dem", &header, None, None, None).unwrap();
+        db.insert_console_cmds(demo.id, &[(5, "say hi".to_string())]).unwrap();
+        let cvar = crate::extract::net::ServerCvar { tick: 0, name: "sv_cheats".into(), value: "0".into() };
+        db.insert_server_cvars(demo.id, &[cvar]).unwrap();
+        let count = |table: &str| -> i64 {
+            db.conn.query_row(&format!("SELECT count(*) FROM {table}"), [], |row| row.get(0)).unwrap()
+        };
+        assert_eq!(count("console_cmds"), 0);
+        assert_eq!(count("server_cvars"), 1);
+        let omitted: Option<String> =
+            db.conn.query_row("SELECT omitted FROM demos", [], |row| row.get(0)).unwrap();
+        assert_eq!(omitted.as_deref(), Some("chat,console_cmds"));
     }
 
     #[test]

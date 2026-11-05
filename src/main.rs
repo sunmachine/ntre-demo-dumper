@@ -57,6 +57,14 @@ struct Args {
     /// Keep rounds 1 to N only; drop every row from round N+1's start on
     #[arg(long, value_name = "N", value_parser = clap::value_parser!(i32).range(1..))]
     last_round: Option<i32>,
+
+    /// Leave these tables empty, comma-separated; repeatable. Every table but demos can be omitted
+    #[arg(long, value_name = "TABLES", value_delimiter = ',')]
+    omit: Vec<String>,
+
+    /// Leave every table named *_samples empty: player_samples, pov_samples and ghost_samples
+    #[arg(long)]
+    omit_samples: bool,
 }
 
 const BANNER: &str = r#"
@@ -88,7 +96,18 @@ fn main() -> Result<()> {
             .unwrap_or_else(|| thread::available_parallelism().map(|n| n.get()).unwrap_or(1)),
         last_round: args.last_round,
     };
-    let db = output::sqlite::Db::open(&args.output)?;
+    let mut db = output::sqlite::Db::open(&args.output)?;
+    let mut omit = args.omit;
+    if args.omit_samples {
+        omit.extend(db.table_names()?.into_iter().filter(|t| t.ends_with("_samples")));
+    }
+    db.omit(omit)?;
+    if args.pov_sample != 1 && db.omitted().any(|t| t == "pov_samples") {
+        pipeline::print_logs(&[(
+            pipeline::LogLevel::Warning,
+            "--pov-sample has no effect while pov_samples is omitted".into(),
+        )]);
+    }
     let mut failures = 0usize;
     let mut skipped = 0usize;
     for demo_path in &args.demos {
