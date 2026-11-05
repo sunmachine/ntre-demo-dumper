@@ -194,6 +194,7 @@ mod tests {
             victim_team: None,
             attacker_team: None,
             assister_team: None,
+            teamkill: None,
         }
     }
 

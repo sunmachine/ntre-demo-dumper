@@ -359,6 +359,7 @@ rows have no killer, and `ghoster` describes the victim too.
 | `weapon` | weapon's entity name without `weapon_`, e.g. `srm`; see Weapon reference below. A grenade or detpack kill's inflictor is mapped to the weapon that made it |
 | `headshot`, `suicide`, `explosive` | kill flags |
 | `ghoster` | 1 if the victim was carrying the ghost. After a round ends the game stops updating its carrier, so a post-round death can carry a stale 1; see `ghost_holds` |
+| `teamkill` | 1 when the game counted the death as a teamkill, that is a player killed by another player on their own team, outside deathmatch. 0 for a world death, a suicide, a kill across teams and any deathmatch kill. NULL when the victim's or attacker's team is unknown |
 
 A world death is a death no player caused. Its `attacker_userid` is 0 and
 its `attacker_name` is NULL. The game then puts the class name of whatever
@@ -370,6 +371,14 @@ every world death, because the game sets it whenever the killer is not a
 player (`:4581`). `headshot` reports the last body part hit before the
 death (`:4580`), so on a world death it describes an earlier hit and not
 the death.
+
+The `teamkill` flag repeats the game's own test (upstream at `bea96408`,
+`src/game/shared/neo/neo_gamerules.cpp:4313-4326`). The game skips the test
+in deathmatch, the one mode in which it reports teamplay as off (`:4660-4663`),
+so the dumper reads the mode from the game rules proxy's `m_nGameTypeSelected`
+at the death's tick. A grenade whose thrower disconnected before it went off
+has no attacker, so its death is a world death with `teamkill` 0. The game
+does not count that death against anyone either (`:4318-4322`).
 
 The teams come from the player resource rather than the player entity,
 because the server sends the resource to every client (upstream at

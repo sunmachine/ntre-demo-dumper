@@ -210,7 +210,8 @@ CREATE TABLE IF NOT EXISTS deaths (
     headshot INTEGER NOT NULL,
     suicide INTEGER NOT NULL,
     explosive INTEGER NOT NULL,
-    ghoster INTEGER NOT NULL          -- victim was carrying the ghost
+    ghoster INTEGER NOT NULL,         -- victim was carrying the ghost
+    teamkill INTEGER                  -- 1 when the game counted a teamkill; NULL if a team is unknown
 );
 
 -- Hit log from the per-attacker damage accumulator
@@ -668,9 +669,9 @@ impl Db {
                                  victim_steamid, victim_userid, victim_name, victim_team,
                                  attacker_steamid, attacker_userid, attacker_name, attacker_team,
                                  assister_steamid, assists, assister_team, weapon, headshot,
-                                 suicide, explosive, ghoster)
+                                 suicide, explosive, ghoster, teamkill)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17,
-                     ?18, ?19, ?20, ?21)",
+                     ?18, ?19, ?20, ?21, ?22)",
         )?;
         for k in deaths {
             ins.execute(rusqlite::params![
@@ -695,6 +696,7 @@ impl Db {
                 k.suicide,
                 k.explosive,
                 k.ghoster,
+                k.teamkill,
             ])?;
         }
         Ok(())

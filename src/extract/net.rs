@@ -13,7 +13,7 @@ use crate::demo::net::{
     parse_game_event, walk_packet, EventDefs, EventValue, NetMessage, ServerInfo,
 };
 use crate::demo::stringtables::{parse_userinfo, parse_userinfo_update, PlayerInfo};
-use crate::extract::entities::{NeoNameChange, ResourceSample};
+use crate::extract::entities::{GameTypeChange, NeoNameChange, ResourceSample};
 use crate::extract::rounds::{place, Round};
 use crate::output::sqlite::Db;
 
@@ -39,6 +39,10 @@ pub struct Death {
     pub victim_team: Option<i64>,
     pub attacker_team: Option<i64>,
     pub assister_team: Option<i64>,
+    /// The game counted the death as a teamkill, set by
+    /// `NetPass::mark_teamkills`; None when a team needed for the test is
+    /// unknown.
+    pub teamkill: Option<bool>,
 }
 
 pub struct ChatLine {
@@ -197,6 +201,10 @@ pub struct NetPass {
     userinfo_table: Option<(u8, u16)>,
     warnings: usize,
 }
+
+/// Upstream's `NEO_GAME_TYPE_DM` (`neo_gamerules.h:106`), the one mode
+/// in which the game counts no teamkills.
+const GAME_TYPE_DEATHMATCH: i64 = 3;
 
 // NT;RE user message ids (hl2_usermessages.cpp; RoundResult is NEO-specific).
 const SAY_TEXT2: u8 = 4;
@@ -408,6 +416,25 @@ impl NetPass {
         }
     }
 
+    /// Mark each death the game counted as a teamkill: a player killed by
+    /// another player on their own team, in any mode but deathmatch
+    /// (upstream at `bea96408`, `neo_gamerules.cpp:4313-4326`, with
+    /// `IsTeamplay` false only in deathmatch at `:4660-4663`). Runs after
+    /// `place_teams`, because the test reads the teams it placed.
+    pub fn mark_teamkills(&mut self, game_types: &[GameTypeChange]) {
+        let after = |tick: i32| game_types.partition_point(|c| i64::from(c.tick) <= i64::from(tick));
+        for d in &mut self.deaths {
+            let deathmatch = after(d.tick)
+                .checked_sub(1)
+                .is_some_and(|i| game_types[i].game_type == GAME_TYPE_DEATHMATCH);
+            d.teamkill = if d.attacker_userid == 0 || d.attacker_userid == d.victim_userid || deathmatch {
+                Some(false)
+            } else {
+                d.victim_team.zip(d.attacker_team).map(|(victim, attacker)| victim == attacker)
+            };
+        }
+    }
+
     /// How many deaths name a victim, attacker or assister that the roster
     /// never saw. Those rows get NULL names and Steam IDs. Userid 0 is the
     /// world as attacker and nobody as assister, so it does not count.
@@ -437,6 +464,7 @@ impl NetPass {
                 victim_team: None,
                 attacker_team: None,
                 assister_team: None,
+                teamkill: None,
             }),
             "player_ping" => self.pings.push(Ping {
                 tick,
@@ -766,6 +794,7 @@ mod tests {
             victim_team: None,
             attacker_team: None,
             assister_team: None,
+            teamkill: None,
         }
     }
 
@@ -832,6 +861,34 @@ mod tests {
                 (None, None, None), // before any sample
             ]
         );
+    }
+
+    #[test]
+    fn teamkills_need_two_players_on_one_team_outside_deathmatch() {
+        let at = |tick: i32, victim: u32, attacker: u32, teams: (Option<i64>, Option<i64>)| Death {
+            tick,
+            victim_team: teams.0,
+            attacker_team: teams.1,
+            ..death(victim, attacker, 0)
+        };
+        let mut pass = NetPass {
+            deaths: vec![
+                at(10, 1, 2, (Some(2), Some(2))), // same team
+                at(10, 1, 2, (Some(2), Some(3))), // opposing teams
+                at(10, 1, 1, (Some(2), Some(2))), // suicide
+                at(10, 1, 0, (Some(2), None)),    // world death
+                at(10, 1, 2, (Some(2), None)),    // attacker's team unknown
+                at(100, 1, 2, (Some(2), Some(2))), // same team in deathmatch
+            ],
+            ..NetPass::default()
+        };
+        // The server switches from capture the ghost to deathmatch at tick 100.
+        pass.mark_teamkills(&[
+            GameTypeChange { tick: 0, game_type: 1 },
+            GameTypeChange { tick: 100, game_type: GAME_TYPE_DEATHMATCH },
+        ]);
+        let flags: Vec<_> = pass.deaths.iter().map(|d| d.teamkill).collect();
+        assert_eq!(flags, [Some(true), Some(false), Some(false), Some(false), None, Some(false)]);
     }
 
     fn neo_name(tick: u32, entity_id: u32, name: &str) -> NeoNameChange {
